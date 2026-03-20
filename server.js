@@ -12,7 +12,9 @@ const TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
 const bot = new TelegramBot(TOKEN);
 
 // تشغيل webhook
-bot.setWebHook(`${process.env.RAILWAY_STATIC_URL}/bot${TOKEN}`);
+const URL = "https://card-api-production-14f0.up.railway.app";
+
+bot.setWebHook(`${URL}/bot${TOKEN}`);
 
 // استقبال طلبات تيليجرام
 app.post(`/bot${TOKEN}`, (req, res) => {
