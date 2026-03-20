@@ -1,3 +1,4 @@
+
 const express = require("express");
 const axios = require("axios");
 const TelegramBot = require("node-telegram-bot-api");
@@ -5,24 +6,13 @@ const TelegramBot = require("node-telegram-bot-api");
 const app = express();
 app.use(express.json());
 
-// 🔑 حط توكن البوت هنا
+// 🔑 حط توكنك هنا
 const TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
 
-// إنشاء البوت (webhook)
-const bot = new TelegramBot(TOKEN, { webHook: true });
+// 🤖 تشغيل البوت (Polling)
+const bot = new TelegramBot(TOKEN, { polling: true });
 
-// تشغيل webhook
-const URL = "https://card-api-production-14f0.up.railway.app";
-
-bot.setWebHook(`${URL}/bot${TOKEN}`);
-
-// استقبال طلبات تيليجرام
-app.post(`/bot${TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
-
-// رسالة /start
+// رسالة البداية
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id, "👋 هلا، ارسل كود البطاقة للاستبدال");
 });
@@ -73,7 +63,7 @@ CVV: ${card.cvv}
   }
 });
 
-// API موقعك
+// API اختياري
 app.post("/redeem", async (req, res) => {
   try {
     const { card_key } = req.body;
@@ -105,5 +95,5 @@ app.get("/", (req, res) => {
 // تشغيل السيرفر
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+  console.log("🚀 Server running on port " + PORT);
 });
