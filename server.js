@@ -1,182 +1,157 @@
-const express = require("express");
-const axios = require("axios");
-const TelegramBot = require("node-telegram-bot-api");
+import sqlite3
+import requests
+import asyncio
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-const app = express();
-app.use(express.json());
+TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI"
+API = "https://api.node-card.com/api/open/card/redeem"
 
-const TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
+# ===== DATABASE =====
+def db():
+    return sqlite3.connect("bot.db")
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+def init_db():
+    conn = db()
+    conn.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, lang TEXT)")
+    conn.commit()
+    conn.close()
 
-// 🧠 تخزين
-let userData = {};
-let userLang = {};
+def set_lang(uid, lang):
+    conn = db()
+    conn.execute("INSERT OR REPLACE INTO users VALUES (?,?)", (uid, lang))
+    conn.commit()
+    conn.close()
 
-// 🌍 النصوص
-const texts = {
-  en: {
-    chooseLang: "🌍 Choose language:",
-    chooseMerchant: "👋 Choose merchant:",
-    sendCard: "✍️ Send card code:",
-    processing: "⏳ Processing...",
-    done: "✅ Done!",
-    error: "❌ Error",
-    selected: "✅ Selected:"
-  },
-  ar: {
-    chooseLang: "🌍 اختر اللغة:",
-    chooseMerchant: "👋 اختر التاجر:",
-    sendCard: "✍️ ارسل كود البطاقة:",
-    processing: "⏳ جاري الاستبدال...",
-    done: "✅ تم",
-    error: "❌ خطأ",
-    selected: "✅ تم اختيار:"
-  }
-};
+def get_lang(uid):
+    conn = db()
+    row = conn.execute("SELECT lang FROM users WHERE id=?", (uid,)).fetchone()
+    conn.close()
+    return row[0] if row else "en"
 
-// 🛒 التجار (عربي + انجليزي)
-const merchants = [
-  { id: "4", en: "Spotify", ar: "سبوتيفاي" },
-  { id: "5", en: "YouTube", ar: "يوتيوب" },
-  { id: "6", en: "OpenAI (ChatGPT)", ar: "شات جي بي تي" },
-  { id: "7", en: "Amazon", ar: "أمازون" },
-  { id: "8", en: "Google Cloud", ar: "جوجل كلاود" },
-  { id: "9", en: "Microsoft", ar: "مايكروسوفت" },
-  { id: "10", en: "LinkedIn", ar: "لينكدإن" }
-];
-
-// 🟢 start
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-
-  userLang[chatId] = "en";
-
-  bot.sendMessage(chatId, texts.en.chooseLang, {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "English 🇺🇸", callback_data: "lang_en" }],
-        [{ text: "العربية 🇸🇦", callback_data: "lang_ar" }]
-      ]
+# ===== TEXTS =====
+T = {
+    "en": {
+        "menu": "Choose service:",
+        "send": "Send card code:",
+        "wait": "⏳ Processing",
+        "done": "✅ Done",
+        "error": "❌ Error",
+        "lang": "🌍 Change Language"
+    },
+    "ar": {
+        "menu": "اختر الخدمة:",
+        "send": "✍️ ارسل كود البطاقة:",
+        "wait": "⏳ جاري المعالجة",
+        "done": "✅ تم بنجاح",
+        "error": "❌ خطأ",
+        "lang": "🌍 تغيير اللغة"
     }
-  });
-});
-
-// 🎯 الضغط على الأزرار
-bot.on("callback_query", async (query) => {
-  const chatId = query.message.chat.id;
-  const data = query.data;
-
-  // 🌍 اختيار اللغة
-  if (data === "lang_en" || data === "lang_ar") {
-    userLang[chatId] = data === "lang_en" ? "en" : "ar";
-    return sendMerchants(chatId);
-  }
-
-  // 🛒 اختيار التاجر
-  if (data.startsWith("merchant_")) {
-    const id = data.split("_")[1];
-
-    userData[chatId] = { merchant: id };
-
-    const lang = userLang[chatId];
-    const t = texts[lang];
-
-    return bot.sendMessage(chatId, t.sendCard);
-  }
-});
-
-// 📦 عرض التجار
-function sendMerchants(chatId) {
-  const lang = userLang[chatId];
-  const t = texts[lang];
-
-  const buttons = merchants.map((m) => [{
-    text: lang === "ar" ? m.ar : m.en,
-    callback_data: "merchant_" + m.id
-  }]);
-
-  bot.sendMessage(chatId, t.chooseMerchant, {
-    reply_markup: {
-      inline_keyboard: buttons
-    }
-  });
 }
 
-// 📩 استقبال الكود
-bot.on("message", async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text;
+# ===== START =====
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [
+        [
+            InlineKeyboardButton("🇺🇸 English", callback_data="lang_en"),
+            InlineKeyboardButton("🇮🇶 العربية", callback_data="lang_ar")
+        ]
+    ]
+    await update.message.reply_text("🌍 Choose Language", reply_markup=InlineKeyboardMarkup(kb))
 
-  if (!text || text.startsWith("/")) return;
+# ===== MENU =====
+async def menu(chat_id, context, uid):
+    lang = get_lang(uid)
+    t = T[lang]
 
-  if (!userData[chatId]) return;
+    kb = [
+        [InlineKeyboardButton("Spotify", callback_data="m_4")],
+        [InlineKeyboardButton("YouTube", callback_data="m_5")],
+        [InlineKeyboardButton("ChatGPT", callback_data="m_6")],
+        [InlineKeyboardButton("Amazon", callback_data="m_7")],
+        [InlineKeyboardButton(t["lang"], callback_data="change_lang")]
+    ]
 
-  const lang = userLang[chatId];
-  const t = texts[lang];
+    await context.bot.send_message(chat_id, t["menu"], reply_markup=InlineKeyboardMarkup(kb))
 
-  try {
-    // ⏳ رسالة متحركة
-    const waitMsg = await bot.sendMessage(chatId, t.processing);
+# ===== BUTTONS =====
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = q.from_user.id
+    data = q.data
+    await q.answer()
 
-    const params = new URLSearchParams();
-    params.append("card_key", text);
-    params.append("merchant_dict_id", userData[chatId].merchant);
-    params.append("platform_id", "1");
+    if data.startswith("lang_"):
+        lang = data.split("_")[1]
+        set_lang(uid, lang)
+        await menu(uid, context, uid)
 
-    const response = await axios.post(
-      "https://api.node-card.com/api/open/card/redeem",
-      params,
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-      }
-    );
+    elif data == "change_lang":
+        await start(update, context)
 
-    // 🧹 حذف رسالة الانتظار
-    await bot.deleteMessage(chatId, waitMsg.message_id);
+    elif data.startswith("m_"):
+        context.user_data["merchant"] = data.split("_")[1]
+        lang = get_lang(uid)
+        await q.message.reply_text(T[lang]["send"])
 
-    const data = response.data;
+# ===== MESSAGE =====
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    text = update.message.text
 
-    if (data.code !== 1) {
-      return bot.sendMessage(chatId, "❌ " + data.msg);
-    }
+    if "merchant" not in context.user_data:
+        return
 
-    const card = data.data;
+    lang = get_lang(uid)
+    t = T[lang]
 
-    bot.sendMessage(
-      chatId,
-      lang === "ar"
-        ? `💳 البطاقة:
+    msg = await update.message.reply_text(t["wait"])
 
-رقم: ${card.card_number}
-CVV: ${card.cvv}
-تاريخ: ${card.exp}
+    # ⏳ أنيميشن
+    for i in range(3):
+        await asyncio.sleep(0.5)
+        await msg.edit_text(t["wait"] + "." * (i+1))
 
-💰 الرصيد: ${card.available_amount}
-🏪 المتجر: ${card.merchant_name}`
-        : `💳 CARD:
+    try:
+        res = requests.post(API, data={
+            "card_key": text,
+            "merchant_dict_id": context.user_data["merchant"],
+            "platform_id": 1
+        }).json()
 
-Number: ${card.card_number}
-CVV: ${card.cvv}
-EXP: ${card.exp}
+        if res["code"] != 1:
+            await msg.edit_text("❌ " + res["msg"])
+            return
 
-💰 Balance: ${card.available_amount}
-🏪 Merchant: ${card.merchant_name}`
-    );
+        d = res["data"]
 
-  } catch (err) {
-    bot.sendMessage(chatId, t.error);
-  }
-});
+        result = f"""
+💳 CARD INFO
 
-// 🌐
-app.get("/", (req, res) => {
-  res.send("Bot running 🔥");
-});
+🔢 {d['card_number']}
+🔐 CVV: {d['cvv']}
+📅 EXP: {d['exp']}
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("🚀 Server running");
-});
+💰 {d['available_amount']}
+🏪 {d['merchant_name']}
+"""
+
+        await msg.edit_text(result)
+
+    except:
+        await msg.edit_text(t["error"])
+
+# ===== MAIN =====
+def main():
+    init_db()
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+    print("🔥 BOT RUNNING")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
