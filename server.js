@@ -9,7 +9,7 @@ app.use(express.json());
 const TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
 
 // إنشاء البوت (webhook)
-const bot = new TelegramBot(TOKEN);
+const bot = new TelegramBot(TOKEN, { webHook: true });
 
 // تشغيل webhook
 const URL = "https://card-api-production-14f0.up.railway.app";
