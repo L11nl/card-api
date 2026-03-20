@@ -5,44 +5,29 @@ const TelegramBot = require("node-telegram-bot-api");
 const app = express();
 app.use(express.json());
 
-// 🔑 حط التوكن هنا
 const TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
 
-// 🤖 تشغيل البوت
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// 📦 تخزين بيانات المستخدم
+// ✅ التجار (ثابتين)
+const merchants = {
+  "Spotify": "4",
+  "YouTube": "5",
+  "OpenAI (ChatGPT)": "6",
+  "Amazon": "7",
+  "Google Cloud": "8",
+  "Microsoft": "9",
+  "LinkedIn": "10",
+  "Cloudflare": "11"
+};
+
 let userData = {};
-let merchants = {};
-
-// 🔄 تحميل التجار
-async function loadMerchants() {
-  try {
-    const res = await axios.get("https://api.node-card.com/api/open/merchant/list");
-
-    res.data.data.forEach((m) => {
-      merchants[m.name] = m.id;
-    });
-
-    console.log("✅ تم تحميل التجار");
-  } catch (err) {
-    console.log("❌ خطأ بتحميل التجار");
-  }
-}
-
-// تحميلهم بالبداية
-loadMerchants();
 
 // 🟢 /start
-bot.onText(/\/start/, async (msg) => {
+bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
 
-  // إذا بعدهم ما محملين
-  if (Object.keys(merchants).length === 0) {
-    await loadMerchants();
-  }
-
-  const buttons = Object.keys(merchants).map((name) => [name]);
+  const buttons = Object.keys(merchants).map(name => [name]);
 
   bot.sendMessage(chatId, "👋 اختر التاجر:", {
     reply_markup: {
@@ -59,26 +44,21 @@ bot.on("message", async (msg) => {
 
   if (!text || text.startsWith("/")) return;
 
-  // 🔍 يبحث حتى لو الاسم مو مطابق 100%
-  const found = Object.keys(merchants).find((name) =>
-    name.toLowerCase().includes(text.toLowerCase())
-  );
-
   // ✅ اختيار التاجر
-  if (found) {
+  if (merchants[text]) {
     userData[chatId] = {
-      merchant: merchants[found],
+      merchant: merchants[text],
     };
 
-    return bot.sendMessage(chatId, `✅ تم اختيار: ${found}\n\n✍️ ارسل كود البطاقة:`);
+    return bot.sendMessage(chatId, `✅ تم اختيار: ${text}\n\n✍️ ارسل كود البطاقة:`);
   }
 
-  // ❗ إذا ما اختار تاجر
+  // ❗ لازم يختار
   if (!userData[chatId]) {
     return bot.sendMessage(chatId, "❗ لازم تختار التاجر أولاً /start");
   }
 
-  // 💳 تنفيذ الاستبدال
+  // 💳 تنفيذ
   try {
     bot.sendMessage(chatId, "⏳ جاري الاستبدال...");
 
@@ -123,13 +103,12 @@ CVV: ${card.cvv}
   }
 });
 
-// 🌐 صفحة Railway
+// 🌐
 app.get("/", (req, res) => {
   res.send("Bot is running 🔥");
 });
 
-// 🚀 تشغيل السيرفر
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("🚀 Server running on port " + PORT);
+  console.log("🚀 Server running");
 });
