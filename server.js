@@ -1,182 +1,267 @@
 const express = require("express");
+const axios = require("axios");
 const TelegramBot = require("node-telegram-bot-api");
 
 const app = express();
-const bot = new TelegramBot("2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI", { polling: true });
+app.use(express.json());
 
-const ADMIN_ID = 643309456;
+const TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
+const WALLET = "PUT_TRC20_ADDRESS";
 
-// ===== DATABASE (ذاكرة حالياً) =====
-let users = {};
-let services = {};
-let payments = {};
+const bot = new TelegramBot(TOKEN, { polling: true });
+
+// ===== بيانات =====
+let userLang = {};
 let userState = {};
+let pendingBuy = {};
+let codes = [];
+
+const PRICE = 2.5;
+
+// ===== التجار =====
+const merchants = [
+  { id: "4", en: "Spotify", ar: "سبوتيفاي" },
+  { id: "5", en: "YouTube", ar: "يوتيوب" },
+  { id: "6", en: "ChatGPT", ar: "شات جي بي تي" },
+  { id: "7", en: "Amazon", ar: "أمازون" }
+];
+
+// ===== النصوص =====
+const T = {
+  en: {
+    start: "🌍 Choose language",
+    menu: "👋 Choose:",
+    redeem: "🔄 Redeem Code",
+    buy: "💳 Buy Codes",
+    chooseMerchant: "👋 Choose merchant:",
+    sendCard: "✍️ Send card code:",
+    processing: "⏳ Processing...",
+    enterQty: "✍️ Enter quantity:",
+    pay: "💰 Send payment:",
+    sendTx: "🔗 Send TXID",
+    checking: "⏳ Checking...",
+    error: "❌ Error"
+  },
+  ar: {
+    start: "🌍 اختر اللغة",
+    menu: "👋 اختر:",
+    redeem: "🔄 استرداد الكود",
+    buy: "💳 شراء كودات",
+    chooseMerchant: "👋 اختر التاجر:",
+    sendCard: "✍️ ارسل الكود:",
+    processing: "⏳ جاري المعالجة...",
+    enterQty: "✍️ ارسل الكمية:",
+    pay: "💰 قم بالتحويل:",
+    sendTx: "🔗 ارسل TXID",
+    checking: "⏳ جاري التحقق...",
+    error: "❌ خطأ"
+  }
+};
 
 // ===== START =====
 bot.onText(/\/start/, (msg) => {
   const id = msg.chat.id;
 
-  if (!users[id]) users[id] = { balance: 0 };
+  userLang[id] = "en";
 
-  bot.sendMessage(id, "👋 Welcome / أهلاً بك", {
+  bot.sendMessage(id, T.en.start, {
     reply_markup: {
       inline_keyboard: [
-        [{ text: "🛒 Store", callback_data: "store" }],
-        [{ text: "💰 Balance", callback_data: "balance" }],
-        [{ text: "💳 Topup", callback_data: "topup" }]
+        [{ text: "🇺🇸 English", callback_data: "lang_en" }],
+        [{ text: "🇮🇶 العربية", callback_data: "lang_ar" }]
       ]
     }
   });
 });
 
-// ===== BUTTONS =====
-bot.on("callback_query", (q) => {
-  const id = q.message.chat.id;
-  const data = q.data;
+// ===== MENU =====
+function menu(id) {
+  const lang = userLang[id];
+  const t = T[lang];
 
-  // 🛒 المتجر
-  if (data === "store") {
-    return showStore(id);
-  }
-
-  // 💰 الرصيد
-  if (data === "balance") {
-    return bot.sendMessage(id, `💰 Balance: $${users[id].balance}`);
-  }
-
-  // 💳 شحن
-  if (data === "topup") {
-    userState[id] = "waiting_payment";
-
-    return bot.sendMessage(id,
-`💳 Payment Info:
-
-Binance ID: 123456
-USDT: xxx
-
-Send screenshot after payment`
-    );
-  }
-
-  // شراء
-  if (data.startsWith("buy_")) {
-    const sid = data.split("_")[1];
-
-    if (users[id].balance < services[sid].price) {
-      return bot.sendMessage(id, "❌ Not enough balance");
-    }
-
-    if (services[sid].stock.length === 0) {
-      return bot.sendMessage(id, "❌ Out of stock");
-    }
-
-    const code = services[sid].stock.pop();
-    users[id].balance -= services[sid].price;
-
-    return bot.sendMessage(id, `✅ Code:\n${code}`);
-  }
-
-  // قبول الدفع
-  if (data.startsWith("ok_") && id === ADMIN_ID) {
-    const pid = data.split("_")[1];
-    const p = payments[pid];
-
-    users[p.user].balance += p.amount;
-
-    bot.sendMessage(p.user, "✅ Payment accepted");
-    delete payments[pid];
-  }
-
-  // رفض الدفع
-  if (data.startsWith("no_") && id === ADMIN_ID) {
-    const pid = data.split("_")[1];
-    const p = payments[pid];
-
-    bot.sendMessage(p.user, "❌ Payment rejected");
-    delete payments[pid];
-  }
-});
-
-// ===== STORE =====
-function showStore(id) {
-  const buttons = Object.keys(services).map(s => [{
-    text: `${services[s].name} - $${services[s].price}`,
-    callback_data: "buy_" + s
-  }]);
-
-  bot.sendMessage(id, "🛒 Store:", {
+  bot.sendMessage(id, t.menu, {
     reply_markup: {
-      inline_keyboard: buttons
+      inline_keyboard: [
+        [{ text: t.redeem, callback_data: "redeem" }],
+        [{ text: t.buy, callback_data: "buy" }]
+      ]
     }
   });
 }
 
-// ===== MESSAGES =====
-bot.on("message", (msg) => {
-  const id = msg.chat.id;
+// ===== عرض التجار =====
+function showMerchants(id) {
+  const lang = userLang[id];
+  const t = T[lang];
 
-  if (!users[id]) users[id] = { balance: 0 };
+  const buttons = merchants.map(m => [{
+    text: lang === "ar" ? m.ar : m.en,
+    callback_data: "merchant_" + m.id
+  }]);
 
-  // 📸 إثبات دفع
-  if (msg.photo && userState[id] === "waiting_payment") {
-    const pid = Date.now();
+  bot.sendMessage(id, t.chooseMerchant, {
+    reply_markup: { inline_keyboard: buttons }
+  });
+}
 
-    payments[pid] = {
-      user: id,
-      amount: 5
-    };
+// ===== BUTTONS =====
+bot.on("callback_query", async (q) => {
+  const id = q.message.chat.id;
+  const data = q.data;
 
-    bot.sendMessage(ADMIN_ID,
-      `💰 New payment from ${id}`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "✅ Accept", callback_data: "ok_" + pid },
-              { text: "❌ Reject", callback_data: "no_" + pid }
-            ]
-          ]
-        }
-      }
+  if (data.startsWith("lang_")) {
+    userLang[id] = data.split("_")[1];
+    return menu(id);
+  }
+
+  // 🔄 استرداد
+  if (data === "redeem") {
+    userState[id] = "redeem";
+    return showMerchants(id);
+  }
+
+  // 🛒 شراء
+  if (data === "buy") {
+    const lang = userLang[id];
+    return bot.sendMessage(id,
+      `${T[lang].enterQty}\n📦 Stock: ${codes.length}`
     );
-
-    userState[id] = null;
-
-    return bot.sendMessage(id, "⏳ Waiting admin approval");
   }
 
-  // ===== ADMIN =====
+  // اختيار التاجر
+  if (data.startsWith("merchant_")) {
+    const merchant = data.split("_")[1];
+    userState[id] = { redeem: merchant };
 
-  if (id === ADMIN_ID) {
+    const lang = userLang[id];
+    return bot.sendMessage(id, T[lang].sendCard);
+  }
+});
 
-    // ➕ إضافة خدمة
-    if (msg.text.startsWith("add_service")) {
-      const [_, name, price] = msg.text.split(" ");
-      const sid = Date.now();
+// ===== تحقق الدفع =====
+async function checkPayment(txid, amount) {
+  try {
+    const res = await axios.get(`https://apilist.tronscan.org/api/transaction-info?hash=${txid}`);
 
-      services[sid] = {
-        name,
-        price: Number(price),
-        stock: []
-      };
+    if (!res.data) return false;
 
-      return bot.sendMessage(id, "✅ Service added");
+    const to = res.data.toAddress;
+    const value = res.data.amount / 1e6;
+
+    return to === WALLET && value >= amount;
+  } catch {
+    return false;
+  }
+}
+
+// ===== MESSAGE =====
+bot.on("message", async (msg) => {
+  const id = msg.chat.id;
+  const text = msg.text;
+
+  if (!text || text.startsWith("/")) return;
+
+  const lang = userLang[id];
+  const t = T[lang];
+
+  // 🛒 شراء كودات
+  if (!isNaN(text) && codes.length > 0) {
+    const qty = parseInt(text);
+
+    if (qty > codes.length) {
+      return bot.sendMessage(id, `❌ Only ${codes.length} available`);
     }
 
-    // ➕ إضافة كود
-    if (msg.text.startsWith("add_stock")) {
-      const [_, sid, code] = msg.text.split(" ");
+    const total = qty * PRICE;
+    pendingBuy[id] = { qty, total };
 
-      services[sid].stock.push(code);
+    return bot.sendMessage(id,
+`${t.pay}
 
-      return bot.sendMessage(id, "✅ Code added");
-    }
+💵 ${total} USDT
+📍 ${WALLET}
 
+${t.sendTx}`
+    );
   }
 
+  // 🔗 TXID
+  if (pendingBuy[id] && text.length > 20) {
+    const wait = await bot.sendMessage(id, t.checking);
+
+    const ok = await checkPayment(text, pendingBuy[id].total);
+
+    if (!ok) {
+      return bot.editMessageText(t.error, {
+        chat_id: id,
+        message_id: wait.message_id
+      });
+    }
+
+    let result = "";
+
+    for (let i = 0; i < pendingBuy[id].qty; i++) {
+      result += codes.pop() + "\n";
+    }
+
+    pendingBuy[id] = null;
+
+    return bot.editMessageText("✅ Codes:\n\n" + result, {
+      chat_id: id,
+      message_id: wait.message_id
+    });
+  }
+
+  // 🔄 استرداد API
+  if (userState[id]?.redeem) {
+    const wait = await bot.sendMessage(id, t.processing);
+
+    const params = new URLSearchParams();
+    params.append("card_key", text);
+    params.append("merchant_dict_id", userState[id].redeem);
+    params.append("platform_id", "1");
+
+    try {
+      const res = await axios.post(
+        "https://api.node-card.com/api/open/card/redeem",
+        params,
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+
+      await bot.deleteMessage(id, wait.message_id);
+
+      if (res.data.code !== 1) {
+        return bot.sendMessage(id, "❌ " + res.data.msg);
+      }
+
+      const c = res.data.data;
+
+      bot.sendMessage(id,
+`💳 CARD
+
+${c.card_number}
+CVV: ${c.cvv}
+EXP: ${c.exp}
+
+💰 ${c.available_amount}
+🏪 ${c.merchant_name}`
+      );
+
+    } catch {
+      bot.sendMessage(id, t.error);
+    }
+  }
+
+  // 👑 ADMIN
+  if (id == 643309456 && text.startsWith("add_code")) {
+    const code = text.split(" ")[1];
+    codes.push(code);
+
+    bot.sendMessage(id, "✅ Code added");
+  }
 });
 
 // ===== SERVER =====
-app.get("/", (req, res) => res.send("🔥 BOT LIVE"));
+app.get("/", (req, res) => res.send("🔥 BOT RUNNING"));
 
-app.listen(3000, () => console.log("🚀 RUNNING"));
+app.listen(3000, () => console.log("🚀 Started"));
