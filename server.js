@@ -15,7 +15,7 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 let userData = {};
 let merchants = {};
 
-// 🔄 تحميل التجار من API
+// 🔄 تحميل التجار
 async function loadMerchants() {
   try {
     const res = await axios.get("https://api.node-card.com/api/open/merchant/list");
@@ -24,18 +24,23 @@ async function loadMerchants() {
       merchants[m.name] = m.id;
     });
 
-    console.log("✅ تم تحميل التجار:", merchants);
+    console.log("✅ تم تحميل التجار");
   } catch (err) {
     console.log("❌ خطأ بتحميل التجار");
   }
 }
 
-// تشغيلها بالبداية
+// تحميلهم بالبداية
 loadMerchants();
 
 // 🟢 /start
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
+
+  // إذا بعدهم ما محملين
+  if (Object.keys(merchants).length === 0) {
+    await loadMerchants();
+  }
 
   const buttons = Object.keys(merchants).map((name) => [name]);
 
@@ -54,18 +59,23 @@ bot.on("message", async (msg) => {
 
   if (!text || text.startsWith("/")) return;
 
-  // 🟡 إذا اختار تاجر
-  if (merchants[text]) {
+  // 🔍 يبحث حتى لو الاسم مو مطابق 100%
+  const found = Object.keys(merchants).find((name) =>
+    name.toLowerCase().includes(text.toLowerCase())
+  );
+
+  // ✅ اختيار التاجر
+  if (found) {
     userData[chatId] = {
-      merchant: merchants[text],
+      merchant: merchants[found],
     };
 
-    return bot.sendMessage(chatId, "✍️ ارسل كود البطاقة:");
+    return bot.sendMessage(chatId, `✅ تم اختيار: ${found}\n\n✍️ ارسل كود البطاقة:`);
   }
 
   // ❗ إذا ما اختار تاجر
   if (!userData[chatId]) {
-    return bot.sendMessage(chatId, "❗ لازم تختار التاجر اولاً /start");
+    return bot.sendMessage(chatId, "❗ لازم تختار التاجر أولاً /start");
   }
 
   // 💳 تنفيذ الاستبدال
@@ -113,7 +123,7 @@ CVV: ${card.cvv}
   }
 });
 
-// 🌐 الصفحة الرئيسية (لـ Railway)
+// 🌐 صفحة Railway
 app.get("/", (req, res) => {
   res.send("Bot is running 🔥");
 });
