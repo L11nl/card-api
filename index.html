@@ -3,9 +3,9 @@
 <meta charset="UTF-8">
 <title>استبدال بطاقة</title>
 <style>
-body {font-family: Arial; text-align:center; background:#111; color:#fff;}
-input, button {padding:10px; margin:10px; border-radius:8px;}
-button {background:#00c853; color:#fff; border:none;}
+body {background:#111;color:#fff;text-align:center;font-family:Arial}
+input,button{padding:10px;margin:10px;border-radius:8px}
+button{background:#00c853;color:#fff;border:none}
 </style>
 </head><body><h1>💳 استبدال بطاقة</h1><input id="card" placeholder="ادخل كود البطاقة">
 <br>
@@ -21,6 +21,8 @@ async function redeem() {
   });
 
   let data = await res.json();
+
+  console.log(data);
 
   if(data.code === 1){
     document.getElementById('result').innerText =
