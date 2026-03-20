@@ -5,20 +5,20 @@ const TelegramBot = require('node-telegram-bot-api');
 const app = express();
 app.use(express.json());
 
+// 🔑 حط توكنك هنا فقط
 2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI
-const TELEGRAM_TOKEN = process.env.BOT_TOKEN;
 
 // 🤖 تشغيل البوت
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 // رسالة البداية
 bot.onText(//start/, (msg) => {
-bot.sendMessage(msg.chat.id, "👋 أهلاً بك!\nارسل كود البطاقة لاستبدالها.");
+bot.sendMessage(msg.chat.id, "👋 أهلاً بك!\nارسل كود البطاقة للاستبدال.");
 });
 
 // استقبال الكود
 bot.on('message', async (msg) => {
-if (msg.text.startsWith("/")) return;
+if (!msg.text || msg.text.startsWith("/")) return;
 
 const chatId = msg.chat.id;
 const card_key = msg.text;
@@ -64,7 +64,7 @@ bot.sendMessage(chatId, "❌ خطأ بالسيرفر");
 }
 });
 
-// API عادي للموقع
+// API للموقع
 app.post('/redeem', async (req, res) => {
 try {
 const { card_key } = req.body;
@@ -85,8 +85,15 @@ const response = await axios.post(
 res.json(response.data);
 
 } catch (err) {
-res.json({ code: 0, msg: "خطأ" });
+res.json({ code: 0, msg: "خطأ بالسيرفر" });
 }
 });
 
-app.listen(3000, () => console.log("Server + Bot Running"));
+// صفحة رئيسية
+app.get('/', (req, res) => {
+res.send("API + BOT شغال 🔥");
+});
+
+// تشغيل السيرفر
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Server Running"));
