@@ -1,98 +1,92 @@
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
+const TelegramBot = require('node-telegram-bot-api');
 
-// ====== إعدادات ======
-const TELEGRAM_TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
-const API = "https://api.node-card.com";
-
-// ====== سيرفر ======
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-// ====== تيليجرام ======
-const TelegramBot = require('node-telegram-bot-api');
+2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI
+const TELEGRAM_TOKEN = process.env.BOT_TOKEN;
+
+// 🤖 تشغيل البوت
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// ====== API الصفحة ======
-app.get('/', (req, res) => {
-res.send('API + BOT شغال 🔥');
+// رسالة البداية
+bot.onText(//start/, (msg) => {
+bot.sendMessage(msg.chat.id, "👋 أهلاً بك!\nارسل كود البطاقة لاستبدالها.");
 });
 
-// ====== استبدال ======
-app.post('/redeem', async (req, res) => {
-try {
-const { card_key, merchant_dict_id, platform_id } = req.body;
+// استقبال الكود
+bot.on('message', async (msg) => {
+if (msg.text.startsWith("/")) return;
 
+const chatId = msg.chat.id;
+const card_key = msg.text;
+
+bot.sendMessage(chatId, "⏳ جاري الاستبدال...");
+
+try {
 const params = new URLSearchParams();
 params.append('card_key', card_key);
-if(merchant_dict_id) params.append('merchant_dict_id', merchant_dict_id);
-if(platform_id) params.append('platform_id', platform_id);
 
-const r = await axios.post(API + '/api/open/card/redeem', params, {
-  headers:{'Content-Type':'application/x-www-form-urlencoded'}
-});
+const response = await axios.post(
+  'https://api.node-card.com/api/open/card/redeem',
+  params,
+  {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    }
+  }
+);
 
-res.json(r.data);
+const data = response.data;
 
-} catch {
-res.json({ code:0, msg:"خطأ ❌" });
-}
-});
-
-// ====== حالة ======
-app.post('/status', async (req, res) => {
-const params = new URLSearchParams();
-params.append('card_key', req.body.card_key);
-
-const r = await axios.post(API + '/api/open/card/status', params, {
-headers:{'Content-Type':'application/x-www-form-urlencoded'}
-});
-
-res.json(r.data);
-});
-
-// ====== العمليات ======
-app.post('/transactions', async (req, res) => {
-const params = new URLSearchParams();
-params.append('card_key', req.body.card_key);
-
-const r = await axios.post(API + '/api/open/card/transactions', params, {
-headers:{'Content-Type':'application/x-www-form-urlencoded'}
-});
-
-res.json(r.data);
-});
-
-// ====== بوت تيليجرام ======
-bot.on('message', async (msg) => {
-const chatId = msg.chat.id;
-const text = msg.text;
-
-if (!text || text.startsWith("/")) return;
-
-try {
-const r = await axios.post('http://localhost:' + (process.env.PORT || 3000) + '/redeem', {
-card_key: text
-});
-
-const d = r.data;
-
-if (d.code === 1) {
-  bot.sendMessage(chatId,
-    "✅ تم الاستبدال\n\n" +
-    "💳 رقم: " + d.data.card_number + "\n" +
-    "🔐 CVV: " + d.data.cvv + "\n" +
-    "📅 انتهاء: " + d.data.exp
-  );
-} else {
-  bot.sendMessage(chatId, "❌ " + d.msg);
+if (data.code !== 1) {
+  return bot.sendMessage(chatId, "❌ " + data.msg);
 }
 
-} catch {
+const card = data.data;
+
+bot.sendMessage(chatId, `
+
+💳 البطاقة:
+
+رقم: ${card.card_number}
+CVV: ${card.cvv}
+تاريخ: ${card.exp}
+
+💰 الرصيد: ${card.available_amount}
+🏪 التاجر: ${card.merchant_name}
+`);
+
+} catch (err) {
 bot.sendMessage(chatId, "❌ خطأ بالسيرفر");
 }
 });
 
-app.listen(process.env.PORT || 3000);
+// API عادي للموقع
+app.post('/redeem', async (req, res) => {
+try {
+const { card_key } = req.body;
+
+const params = new URLSearchParams();
+params.append('card_key', card_key);
+
+const response = await axios.post(
+  'https://api.node-card.com/api/open/card/redeem',
+  params,
+  {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    }
+  }
+);
+
+res.json(response.data);
+
+} catch (err) {
+res.json({ code: 0, msg: "خطأ" });
+}
+});
+
+app.listen(3000, () => console.log("Server + Bot Running"));
