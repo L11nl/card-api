@@ -13,18 +13,37 @@ const WALLET = process.env.WALLET;
 const ADMIN_ID = Number(process.env.ADMIN_ID || 0);
 const PORT = Number(process.env.PORT || 3000);
 const PRICE = Number(process.env.PRICE || 2.5);
-const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!TOKEN) throw new Error("BOT_TOKEN or TOKEN is missing");
 if (!WALLET) throw new Error("WALLET is missing");
-if (!DATABASE_URL) throw new Error("DATABASE_URL is missing");
+
+let pool;
+
+if (process.env.DATABASE_URL) {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+} else if (
+  process.env.PGHOST &&
+  process.env.PGPORT &&
+  process.env.PGUSER &&
+  process.env.PGPASSWORD &&
+  process.env.PGDATABASE
+) {
+  pool = new Pool({
+    host: process.env.PGHOST,
+    port: Number(process.env.PGPORT),
+    user: process.env.PGUSER,
+    password: process.env.PGPASSWORD,
+    database: process.env.PGDATABASE,
+    ssl: { rejectUnauthorized: false }
+  });
+} else {
+  throw new Error("Database config is missing");
+}
 
 const bot = new TelegramBot(TOKEN, { polling: true });
-
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
 
 // ===== بيانات مؤقتة =====
 let userLang = {};
@@ -180,10 +199,13 @@ async function addBalance(id, amount) {
 
 async function deductBalance(id, amount) {
   await ensureUser(id);
-  await pool.query(
-    `UPDATE users SET balance = balance - $1 WHERE telegram_id=$2 AND balance >= $1`,
+  const res = await pool.query(
+    `UPDATE users
+     SET balance = balance - $1
+     WHERE telegram_id=$2 AND balance >= $1`,
     [amount, id]
   );
+  return res.rowCount > 0;
 }
 
 async function getAvailableCodesCount() {
@@ -380,7 +402,9 @@ bot.on("callback_query", async (q) => {
     const soldCodes = await takeCodes(id, pending.qty);
     if (!soldCodes) return bot.sendMessage(id, t.noStock);
 
-    await deductBalance(id, pending.amount);
+    const deducted = await deductBalance(id, pending.amount);
+    if (!deducted) return bot.sendMessage(id, t.noBalance);
+
     await markOrderPaid(pending.id, `BALANCE_${Date.now()}`);
 
     return bot.sendMessage(id, `${t.buySuccess}\n\n${soldCodes.join("\n")}`);
@@ -445,7 +469,7 @@ bot.on("message", async (msg) => {
 
   // ===== شراء كودات =====
   if (userState[id] === "buy_qty") {
-    const qty = parseInt(text);
+    const qty = parseInt(text, 10);
     const stock = await getAvailableCodesCount();
 
     if (isNaN(qty) || qty <= 0) {
