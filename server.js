@@ -8,20 +8,21 @@ const { Pool } = require("pg");
 const app = express();
 app.use(express.json());
 
-const TOKEN = process.env.BOT_TOKEN;
+const TOKEN = process.env.BOT_TOKEN || process.env.TOKEN;
 const WALLET = process.env.WALLET;
 const ADMIN_ID = Number(process.env.ADMIN_ID || 0);
 const PORT = Number(process.env.PORT || 3000);
 const PRICE = Number(process.env.PRICE || 2.5);
+const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!TOKEN) throw new Error("BOT_TOKEN is missing");
+if (!TOKEN) throw new Error("BOT_TOKEN or TOKEN is missing");
 if (!WALLET) throw new Error("WALLET is missing");
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is missing");
+if (!DATABASE_URL) throw new Error("DATABASE_URL is missing");
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
@@ -162,7 +163,10 @@ async function setUserLang(id, lang) {
 
 async function getBalance(id) {
   await ensureUser(id);
-  const res = await pool.query(`SELECT balance FROM users WHERE telegram_id=$1`, [id]);
+  const res = await pool.query(
+    `SELECT balance FROM users WHERE telegram_id=$1`,
+    [id]
+  );
   return Number(res.rows[0]?.balance || 0);
 }
 
@@ -183,7 +187,9 @@ async function deductBalance(id, amount) {
 }
 
 async function getAvailableCodesCount() {
-  const res = await pool.query(`SELECT COUNT(*)::int AS count FROM codes WHERE is_sold = FALSE`);
+  const res = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM codes WHERE is_sold = FALSE`
+  );
   return res.rows[0].count;
 }
 
@@ -206,7 +212,7 @@ async function takeCodes(id, qty) {
       return null;
     }
 
-    const ids = res.rows.map(r => r.id);
+    const ids = res.rows.map((r) => r.id);
 
     await client.query(
       `UPDATE codes
@@ -216,7 +222,7 @@ async function takeCodes(id, qty) {
     );
 
     await client.query("COMMIT");
-    return res.rows.map(r => r.code);
+    return res.rows.map((r) => r.code);
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -236,7 +242,10 @@ async function createOrder(telegramId, type, amount, qty = 0) {
 }
 
 async function txExists(txid) {
-  const res = await pool.query(`SELECT id FROM orders WHERE txid=$1 LIMIT 1`, [txid]);
+  const res = await pool.query(
+    `SELECT id FROM orders WHERE txid=$1 LIMIT 1`,
+    [txid]
+  );
   return res.rows.length > 0;
 }
 
@@ -293,10 +302,12 @@ function showMerchants(id) {
   const lang = getLang(id);
   const t = T[lang];
 
-  const buttons = merchants.map(m => [{
-    text: lang === "ar" ? m.ar : m.en,
-    callback_data: "merchant_" + m.id
-  }]);
+  const buttons = merchants.map((m) => [
+    {
+      text: lang === "ar" ? m.ar : m.en,
+      callback_data: "merchant_" + m.id
+    }
+  ]);
 
   bot.sendMessage(id, t.chooseMerchant, {
     reply_markup: { inline_keyboard: buttons }
@@ -414,7 +425,8 @@ async function checkPayment(txid, amount) {
     const value = Number(res.data.amount || 0) / 1e6;
 
     return to === WALLET && value >= Number(amount);
-  } catch {
+  } catch (error) {
+    console.error("checkPayment error:", error.message);
     return false;
   }
 }
@@ -542,12 +554,15 @@ ${t.balanceText}${(await getBalance(id)).toFixed(2)} USDT`,
 
     await markOrderPaid(pendingBuy.id, text);
 
-    return bot.editMessageText(`${t.buySuccess}
+    return bot.editMessageText(
+      `${t.buySuccess}
 
-${resultCodes.join("\n")}`, {
-      chat_id: id,
-      message_id: wait.message_id
-    });
+${resultCodes.join("\n")}`,
+      {
+        chat_id: id,
+        message_id: wait.message_id
+      }
+    );
   }
 
   // ===== استرداد API =====
@@ -580,7 +595,8 @@ ${resultCodes.join("\n")}`, {
         [id, userState[id].redeem, text]
       );
 
-      bot.sendMessage(id,
+      await bot.sendMessage(
+        id,
 `💳 CARD
 
 ${c.card_number}
@@ -592,7 +608,8 @@ EXP: ${c.exp}
       );
 
       userState[id] = null;
-    } catch {
+    } catch (error) {
+      console.error("redeem error:", error.message);
       bot.sendMessage(id, t.error);
     }
   }
@@ -608,13 +625,19 @@ EXP: ${c.exp}
 });
 
 // ===== SERVER =====
-app.get("/", (req, res) => res.send("🔥 BOT RUNNING"));
+app.get("/", (req, res) => {
+  res.send("🔥 BOT RUNNING");
+});
 
-initDb()
-  .then(() => {
-    app.listen(PORT, () => console.log(`🚀 Started on ${PORT}`));
-  })
-  .catch((err) => {
-    console.error("DB init error:", err);
+// ===== تشغيل =====
+(async () => {
+  try {
+    await initDb();
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Started on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Startup error:", err);
     process.exit(1);
-  });
+  }
+})();
