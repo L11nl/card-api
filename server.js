@@ -10,7 +10,7 @@ const WALLET = "PUT_TRC20_ADDRESS";
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// ===== Ø¨ÙŠØ§Ù†Ø§Øª =====
+// ===== بيانات =====
 let userLang = {};
 let userState = {};
 let pendingBuy = {};
@@ -18,43 +18,43 @@ let codes = [];
 
 const PRICE = 2.5;
 
-// ===== Ø§Ù„ØªØ¬Ø§Ø± =====
+// ===== التجار =====
 const merchants = [
-  { id: "4", en: "Spotify", ar: "Ø³Ø¨ÙˆØªÙŠÙØ§ÙŠ" },
-  { id: "5", en: "YouTube", ar: "ÙŠÙˆØªÙŠÙˆØ¨" },
-  { id: "6", en: "ChatGPT", ar: "Ø´Ø§Øª Ø¬ÙŠ Ø¨ÙŠ ØªÙŠ" },
-  { id: "7", en: "Amazon", ar: "Ø£Ù…Ø§Ø²ÙˆÙ†" }
+  { id: "4", en: "Spotify", ar: "سبوتيفاي" },
+  { id: "5", en: "YouTube", ar: "يوتيوب" },
+  { id: "6", en: "ChatGPT", ar: "شات جي بي تي" },
+  { id: "7", en: "Amazon", ar: "أمازون" }
 ];
 
-// ===== Ø§Ù„Ù†ØµÙˆØµ =====
+// ===== النصوص =====
 const T = {
   en: {
-    start: "ðŸŒ Choose language",
-    menu: "ðŸ‘‹ Choose:",
-    redeem: "ðŸ”„ Redeem Code",
-    buy: "ðŸ’³ Buy Codes",
-    chooseMerchant: "ðŸ‘‹ Choose merchant:",
-    sendCard: "âœï¸ Send card code:",
-    processing: "â³ Processing...",
-    enterQty: "âœï¸ Enter quantity:",
-    pay: "ðŸ’° Send payment:",
-    sendTx: "ðŸ”— Send TXID",
-    checking: "â³ Checking...",
-    error: "âŒ Error"
+    start: "🌍 Choose language",
+    menu: "👋 Choose:",
+    redeem: "🔄 Redeem Code",
+    buy: "💳 Buy Codes",
+    chooseMerchant: "👋 Choose merchant:",
+    sendCard: "✍️ Send card code:",
+    processing: "⏳ Processing...",
+    enterQty: "✍️ Enter quantity:",
+    pay: "💰 Send payment:",
+    sendTx: "🔗 Send TXID",
+    checking: "⏳ Checking...",
+    error: "❌ Error"
   },
   ar: {
-    start: "ðŸŒ Ø§Ø®ØªØ± Ø§Ù„Ù„ØºØ©",
-    menu: "ðŸ‘‹ Ø§Ø®ØªØ±:",
-    redeem: "ðŸ”„ Ø§Ø³ØªØ±Ø¯Ø§Ø¯ Ø§Ù„ÙƒÙˆØ¯",
-    buy: "ðŸ’³ Ø´Ø±Ø§Ø¡ ÙƒÙˆØ¯Ø§Øª",
-    chooseMerchant: "ðŸ‘‹ Ø§Ø®ØªØ± Ø§Ù„ØªØ§Ø¬Ø±:",
-    sendCard: "âœï¸ Ø§Ø±Ø³Ù„ Ø§Ù„ÙƒÙˆØ¯:",
-    processing: "â³ Ø¬Ø§Ø±ÙŠ Ø§Ù„Ù…Ø¹Ø§Ù„Ø¬Ø©...",
-    enterQty: "âœï¸ Ø§Ø±Ø³Ù„ Ø§Ù„ÙƒÙ…ÙŠØ©:",
-    pay: "ðŸ’° Ù‚Ù… Ø¨Ø§Ù„ØªØ­ÙˆÙŠÙ„:",
-    sendTx: "ðŸ”— Ø§Ø±Ø³Ù„ TXID",
-    checking: "â³ Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù‚Ù‚...",
-    error: "âŒ Ø®Ø·Ø£"
+    start: "🌍 اختر اللغة",
+    menu: "👋 اختر:",
+    redeem: "🔄 استرداد الكود",
+    buy: "💳 شراء كودات",
+    chooseMerchant: "👋 اختر التاجر:",
+    sendCard: "✍️ ارسل الكود:",
+    processing: "⏳ جاري المعالجة...",
+    enterQty: "✍️ ارسل الكمية:",
+    pay: "💰 قم بالتحويل:",
+    sendTx: "🔗 ارسل TXID",
+    checking: "⏳ جاري التحقق...",
+    error: "❌ خطأ"
   }
 };
 
@@ -67,8 +67,8 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(id, T.en.start, {
     reply_markup: {
       inline_keyboard: [
-        [{ text: "ðŸ‡ºðŸ‡¸ English", callback_data: "lang_en" }],
-        [{ text: "ðŸ‡®ðŸ‡¶ Ø§Ù„Ø¹Ø±Ø¨ÙŠØ©", callback_data: "lang_ar" }]
+        [{ text: "🇺🇸 English", callback_data: "lang_en" }],
+        [{ text: "🇮🇶 العربية", callback_data: "lang_ar" }]
       ]
     }
   });
@@ -89,7 +89,7 @@ function menu(id) {
   });
 }
 
-// ===== Ø¹Ø±Ø¶ Ø§Ù„ØªØ¬Ø§Ø± =====
+// ===== عرض التجار =====
 function showMerchants(id) {
   const lang = userLang[id];
   const t = T[lang];
@@ -114,21 +114,21 @@ bot.on("callback_query", async (q) => {
     return menu(id);
   }
 
-  // ðŸ”„ Ø§Ø³ØªØ±Ø¯Ø§Ø¯
+  // 🔄 استرداد
   if (data === "redeem") {
     userState[id] = "redeem";
     return showMerchants(id);
   }
 
-  // ðŸ›’ Ø´Ø±Ø§Ø¡
+  // 🛒 شراء
   if (data === "buy") {
     const lang = userLang[id];
     return bot.sendMessage(id,
-      `${T[lang].enterQty}\nðŸ“¦ Stock: ${codes.length}`
+      `${T[lang].enterQty}\n📦 Stock: ${codes.length}`
     );
   }
 
-  // Ø§Ø®ØªÙŠØ§Ø± Ø§Ù„ØªØ§Ø¬Ø±
+  // اختيار التاجر
   if (data.startsWith("merchant_")) {
     const merchant = data.split("_")[1];
     userState[id] = { redeem: merchant };
@@ -138,7 +138,7 @@ bot.on("callback_query", async (q) => {
   }
 });
 
-// ===== ØªØ­Ù‚Ù‚ Ø§Ù„Ø¯ÙØ¹ =====
+// ===== تحقق الدفع =====
 async function checkPayment(txid, amount) {
   try {
     const res = await axios.get(`https://apilist.tronscan.org/api/transaction-info?hash=${txid}`);
@@ -164,12 +164,12 @@ bot.on("message", async (msg) => {
   const lang = userLang[id];
   const t = T[lang];
 
-  // ðŸ›’ Ø´Ø±Ø§Ø¡ ÙƒÙˆØ¯Ø§Øª
+  // 🛒 شراء كودات
   if (!isNaN(text) && codes.length > 0) {
     const qty = parseInt(text);
 
     if (qty > codes.length) {
-      return bot.sendMessage(id, `âŒ Only ${codes.length} available`);
+      return bot.sendMessage(id, `❌ Only ${codes.length} available`);
     }
 
     const total = qty * PRICE;
@@ -178,14 +178,14 @@ bot.on("message", async (msg) => {
     return bot.sendMessage(id,
 `${t.pay}
 
-ðŸ’µ ${total} USDT
-ðŸ“ ${WALLET}
+💵 ${total} USDT
+📍 ${WALLET}
 
 ${t.sendTx}`
     );
   }
 
-  // ðŸ”— TXID
+  // 🔗 TXID
   if (pendingBuy[id] && text.length > 20) {
     const wait = await bot.sendMessage(id, t.checking);
 
@@ -206,13 +206,13 @@ ${t.sendTx}`
 
     pendingBuy[id] = null;
 
-    return bot.editMessageText("âœ… Codes:\n\n" + result, {
+    return bot.editMessageText("✅ Codes:\n\n" + result, {
       chat_id: id,
       message_id: wait.message_id
     });
   }
 
-  // ðŸ”„ Ø§Ø³ØªØ±Ø¯Ø§Ø¯ API
+  // 🔄 استرداد API
   if (userState[id]?.redeem) {
     const wait = await bot.sendMessage(id, t.processing);
 
@@ -231,20 +231,20 @@ ${t.sendTx}`
       await bot.deleteMessage(id, wait.message_id);
 
       if (res.data.code !== 1) {
-        return bot.sendMessage(id, "âŒ " + res.data.msg);
+        return bot.sendMessage(id, "❌ " + res.data.msg);
       }
 
       const c = res.data.data;
 
       bot.sendMessage(id,
-`ðŸ’³ CARD
+`💳 CARD
 
 ${c.card_number}
 CVV: ${c.cvv}
 EXP: ${c.exp}
 
-ðŸ’° ${c.available_amount}
-ðŸª ${c.merchant_name}`
+💰 ${c.available_amount}
+🏪 ${c.merchant_name}`
       );
 
     } catch {
@@ -252,16 +252,16 @@ EXP: ${c.exp}
     }
   }
 
-  // ðŸ‘‘ ADMIN
+  // 👑 ADMIN
   if (id == 643309456 && text.startsWith("add_code")) {
     const code = text.split(" ")[1];
     codes.push(code);
 
-    bot.sendMessage(id, "âœ… Code added");
+    bot.sendMessage(id, "✅ Code added");
   }
 });
 
 // ===== SERVER =====
-app.get("/", (req, res) => res.send("ðŸ”¥ BOT RUNNING"));
+app.get("/", (req, res) => res.send("🔥 BOT RUNNING"));
 
-app.listen(3000, () => console.log("ðŸš€ Started"));
+app.listen(3000, () => console.log("🚀 Started"));
