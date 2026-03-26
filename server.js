@@ -1,5 +1,5 @@
 // ========================
-// index.js - البوت المتكامل مع جميع الميزات (مُصلح)
+// index.js - البوت المتكامل (مُصلح بالكامل)
 // ========================
 require('dotenv').config();
 const express = require('express');
@@ -32,7 +32,7 @@ const sequelize = new Sequelize(DATABASE_URL, {
   dialectOptions: { ssl: { require: true, rejectUnauthorized: false } }
 });
 
-// تعريف النماذج
+// تعريف النماذج (Models)
 const User = sequelize.define('User', {
   id: { type: DataTypes.BIGINT, primaryKey: true },
   lang: { type: DataTypes.STRING(2), defaultValue: 'en' },
@@ -885,9 +885,14 @@ bot.on('callback_query', async (query) => {
   if (data.startsWith('admin_paymethods_merchant_') && (await isAdmin(userId))) {
     const merchantId = parseInt(data.split('_')[3]);
     const methods = await PaymentMethod.findAll({ where: { merchantId } });
+    const lang = (await User.findByPk(userId)).lang;
     let methodsText = '';
     if (methods.length) {
-      methodsText = methods.map(m => `ID: ${m.id} | ${(await User.findByPk(userId)).lang === 'en' ? m.nameEn : m.nameAr}\n${m.details}\n`).join('\n');
+      // استخدام Promise.all لتجنب الأخطاء
+      const methodLines = await Promise.all(methods.map(async (m) => {
+        return `ID: ${m.id} | ${lang === 'en' ? m.nameEn : m.nameAr}\n${m.details}\n`;
+      }));
+      methodsText = methodLines.join('');
     } else {
       methodsText = await getText(userId, 'noPaymentMethods');
     }
@@ -1447,7 +1452,6 @@ app.post('/api/redeem', async (req, res) => {
 
   const result = await redeemCard(card_key, merchant_dict_id, platform_id || '1');
 
-  // تسجيل الإحصائية
   const stat = await BotStat.findOne({ where: { botId: botService.id, action: 'redeem' } });
   if (stat) {
     stat.count += 1;
