@@ -214,6 +214,7 @@ const DEFAULT_TEXTS = {
     addBot: '➕ Add Bot',
     listBots: '📋 List Bots',
     removeBot: '❌ Remove Bot',
+    editBotPerms: '✏️ Edit Permissions',
     botStats: '📊 Bot Stats',
     enterBotToken: 'Send bot token:',
     enterBotName: 'Send bot name:',
@@ -221,6 +222,7 @@ const DEFAULT_TEXTS = {
     botAdded: '✅ Bot added!',
     botRemoved: '❌ Bot removed!',
     botStatsText: '📊 Bot stats for {name}:\n',
+    permissionsUpdated: '✅ Bot permissions updated!',
     paymentRequestPending: '📝 Your payment request has been sent to admin. Please wait for approval.',
     paymentApproved: '✅ Your payment has been approved! Here are your codes:',
     paymentRejected: '❌ Your payment has been rejected. Please contact support.',
@@ -309,6 +311,7 @@ const DEFAULT_TEXTS = {
     addBot: '➕ إضافة بوت',
     listBots: '📋 قائمة البوتات',
     removeBot: '❌ حذف بوت',
+    editBotPerms: '✏️ تعديل الصلاحيات',
     botStats: '📊 إحصائيات البوت',
     enterBotToken: 'أرسل توكن البوت:',
     enterBotName: 'أرسل اسم البوت:',
@@ -316,6 +319,7 @@ const DEFAULT_TEXTS = {
     botAdded: '✅ تمت إضافة البوت!',
     botRemoved: '❌ تم حذف البوت!',
     botStatsText: '📊 إحصائيات البوت {name}:\n',
+    permissionsUpdated: '✅ تم تحديث صلاحيات البوت!',
     paymentRequestPending: '📝 تم إرسال طلب الدفع إلى الأدمن. يرجى الانتظار للموافقة.',
     paymentApproved: '✅ تمت الموافقة على دفعتك! إليك الأكواد:',
     paymentRejected: '❌ تم رفض دفعتك. يرجى التواصل مع الدعم الفني.',
@@ -332,6 +336,9 @@ const DEFAULT_TEXTS = {
     sendCode: '✍️ أرسل كود البطاقة:'
   }
 };
+
+// قائمة الإجراءات المتاحة للبوتات
+const BOT_ACTIONS = ['redeem']; // يمكن إضافة المزيد لاحقًا
 
 // دوال مساعدة للنصوص
 async function getText(userId, key, replacements = {}) {
@@ -398,6 +405,23 @@ async function showAdminPanel(userId) {
     ]
   };
   await bot.sendMessage(userId, panelText, { reply_markup: keyboard });
+}
+
+async function showEditBotPermissions(userId, botId) {
+  const botService = await BotService.findByPk(botId);
+  if (!botService) return;
+
+  const currentActions = botService.allowedActions || [];
+  const buttons = BOT_ACTIONS.map(action => {
+    const isAllowed = currentActions.includes(action);
+    const text = `${isAllowed ? '✅' : '❌'} ${action}`;
+    return [{ text, callback_data: `bot_toggle_action_${botId}_${action}` }];
+  });
+  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin_manage_bots' }]);
+
+  await bot.sendMessage(userId, `🔧 Edit permissions for bot: ${botService.name}\nSelect actions to allow:`, {
+    reply_markup: { inline_keyboard: buttons }
+  });
 }
 
 // دوال الاسترداد
@@ -695,6 +719,7 @@ bot.on('callback_query', async (query) => {
         [{ text: await t('addBot'), callback_data: 'admin_add_bot' }],
         [{ text: await t('listBots'), callback_data: 'admin_list_bots' }],
         [{ text: await t('removeBot'), callback_data: 'admin_remove_bot' }],
+        [{ text: await t('editBotPerms'), callback_data: 'admin_edit_bot_perm_list' }],
         [{ text: await t('botStats'), callback_data: 'admin_bot_stats' }],
         [{ text: await t('back'), callback_data: 'admin' }]
       ]
@@ -745,13 +770,59 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // قائمة البوتات لتعديل الصلاحيات
+  if (data === 'admin_edit_bot_perm_list' && (await isAdmin(userId))) {
+    const bots = await BotService.findAll();
+    if (bots.length === 0) {
+      await bot.sendMessage(userId, 'No bots to edit.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const buttons = bots.map(b => ([{ text: b.name, callback_data: `admin_edit_bot_perm_${b.id}` }]));
+    buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin_manage_bots' }]);
+    await bot.sendMessage(userId, 'Select bot to edit permissions:', { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_edit_bot_perm_') && (await isAdmin(userId))) {
+    const botId = parseInt(data.split('_')[4]);
+    await showEditBotPermissions(userId, botId);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // تبديل صلاحية معينة للبوت
+  if (data.startsWith('bot_toggle_action_') && (await isAdmin(userId))) {
+    const parts = data.split('_');
+    const botId = parseInt(parts[3]);
+    const action = parts[4];
+    const botService = await BotService.findByPk(botId);
+    if (botService) {
+      let allowed = botService.allowedActions || [];
+      if (allowed.includes(action)) {
+        allowed = allowed.filter(a => a !== action);
+      } else {
+        allowed.push(action);
+      }
+      botService.allowedActions = allowed;
+      await botService.save();
+      await bot.answerCallbackQuery(query.id, { text: 'Permission updated' });
+      // إعادة عرض واجهة التعديل
+      await showEditBotPermissions(userId, botId);
+    } else {
+      await bot.answerCallbackQuery(query.id, { text: 'Bot not found' });
+    }
+    return;
+  }
+
   if (data === 'admin_bot_stats' && (await isAdmin(userId))) {
     const bots = await BotService.findAll({ include: BotStat });
     let text = '';
     for (const b of bots) {
       text += `📊 ${b.name}:\n`;
       for (const stat of b.BotStats) {
-        text += `  ${stat.action}: ${stat.count} times (last: ${stat.lastUsed})\n`;
+        text += `${stat.action}: ${stat.count} times (last: ${stat.lastUsed})\n`;
       }
       text += '\n';
     }
@@ -888,7 +959,6 @@ bot.on('callback_query', async (query) => {
     const lang = (await User.findByPk(userId)).lang;
     let methodsText = '';
     if (methods.length) {
-      // استخدام Promise.all لتجنب الأخطاء
       const methodLines = await Promise.all(methods.map(async (m) => {
         return `ID: ${m.id} | ${lang === 'en' ? m.nameEn : m.nameAr}\n${m.details}\n`;
       }));
@@ -1022,11 +1092,7 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    const codes = await Code.findAll({
-      where: { merchantId: request.merchantId, isUsed: false },
-      limit: request.quantity,
-      order: [['id', 'ASC']]
-    });
+    const codes = await Code.findAll({ where: { merchantId: request.merchantId, isUsed: false }, limit: request.quantity, order: [['id', 'ASC']] });
     if (codes.length < request.quantity) {
       await bot.sendMessage(userId, '❌ Not enough codes in stock to approve.');
       await bot.answerCallbackQuery(query.id);
@@ -1034,16 +1100,12 @@ bot.on('callback_query', async (query) => {
     }
     const codesList = codes.map(c => c.value).join('\n');
     await Code.update({ isUsed: true, usedBy: request.userId, soldAt: new Date() }, { where: { id: codes.map(c => c.id) } });
-
     request.status = 'approved';
     await request.save();
-
     const userMsg = await getText(request.userId, 'paymentApproved');
     await bot.sendMessage(request.userId, `${userMsg}\n\n${codesList}`);
-
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: userId, message_id: request.adminMessageId });
     await bot.sendMessage(userId, '✅ Payment approved and codes sent.');
-
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -1066,7 +1128,6 @@ bot.on('callback_query', async (query) => {
     await bot.sendMessage(request.userId, await getText(request.userId, 'paymentRejected'));
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: userId, message_id: request.adminMessageId });
     await bot.sendMessage(userId, '❌ Payment rejected.');
-
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -1149,22 +1210,33 @@ bot.on('message', async (msg) => {
       }
     }
 
-    // إضافة بوت
+    // إضافة بوت (تم تعديله: لا يطلب اسم البوت)
     if (state.action === 'add_bot') {
       if (state.step === 'token') {
         try {
           const testBot = new TelegramBot(text, { polling: false });
           const me = await testBot.getMe();
-          await User.update({ state: JSON.stringify({ ...state, step: 'name', token: text, botName: me.username }) }, { where: { id: userId } });
-          await bot.sendMessage(userId, await getText(userId, 'enterBotName'));
+          const botName = me.username;
+          await BotService.create({
+            token: text,
+            name: botName,
+            allowedActions: ['redeem'] // صلاحية افتراضية
+          });
+          await bot.sendMessage(userId, await getText(userId, 'botAdded'));
+          // عرض خيار تعديل الصلاحيات مباشرة
+          const newBot = await BotService.findOne({ where: { token: text } });
+          if (newBot) {
+            const keyboard = {
+              inline_keyboard: [
+                [{ text: await getText(userId, 'editBotPerms'), callback_data: `admin_edit_bot_perm_${newBot.id}` }],
+                [{ text: await getText(userId, 'back'), callback_data: 'admin_manage_bots' }]
+              ]
+            };
+            await bot.sendMessage(userId, 'Do you want to edit permissions for this bot?', { reply_markup: keyboard });
+          }
         } catch {
           await bot.sendMessage(userId, '❌ Invalid token');
-          await User.update({ state: null }, { where: { id: userId } });
         }
-        return;
-      } else if (state.step === 'name') {
-        await BotService.create({ token: state.token, name: text, allowedActions: ['redeem'] });
-        await bot.sendMessage(userId, await getText(userId, 'botAdded'));
         await User.update({ state: null }, { where: { id: userId } });
         return;
       }
@@ -1260,13 +1332,7 @@ bot.on('message', async (msg) => {
         await bot.sendMessage(userId, await getText(userId, 'enterPaymentDetails'));
         return;
       } else if (state.step === 'details') {
-        await PaymentMethod.create({
-          merchantId: state.merchantId,
-          nameEn: state.nameEn,
-          nameAr: state.nameAr,
-          details: text,
-          type: 'manual'
-        });
+        await PaymentMethod.create({ merchantId: state.merchantId, nameEn: state.nameEn, nameAr: state.nameAr, details: text, type: 'manual' });
         await bot.sendMessage(userId, await getText(userId, 'paymentMethodAdded'));
         await User.update({ state: null }, { where: { id: userId } });
         await showAdminPanel(userId);
@@ -1317,7 +1383,7 @@ bot.on('message', async (msg) => {
     }
     const available = await Code.count({ where: { merchantId: merchant.id, isUsed: false } });
     if (qty > available) {
-      await bot.sendMessage(userId, (await getText(userId, 'noCodes')) + ` (Available: ${available})`);
+      await bot.sendMessage(userId, (await getText(userId, 'noCodes')) + ` Available: ${available}`);
       return;
     }
     const total = qty * merchant.price;
@@ -1343,22 +1409,14 @@ bot.on('message', async (msg) => {
         await bot.sendMessage(userId, '❌ This transaction ID has already been used.');
         return;
       }
-
       const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'checking'));
       const valid = await checkAutoPayment(txid, total);
-
       if (!valid) {
         await bot.editMessageText(await getText(userId, 'invalidTx'), { chat_id: userId, message_id: waitingMsg.message_id });
         return;
       }
-
       await Transaction.create({ txid, userId, merchantId, paymentMethodId, amount: total, quantity: qty, status: 'completed' });
-
-      const codes = await Code.findAll({
-        where: { merchantId, isUsed: false },
-        limit: qty,
-        order: [['id', 'ASC']]
-      });
+      const codes = await Code.findAll({ where: { merchantId, isUsed: false }, limit: qty, order: [['id', 'ASC']] });
       if (codes.length < qty) {
         await bot.editMessageText(await getText(userId, 'noCodes'), { chat_id: userId, message_id: waitingMsg.message_id });
         return;
@@ -1376,15 +1434,8 @@ bot.on('message', async (msg) => {
       }
       const fileId = photo[photo.length - 1].file_id;
       const request = await ManualPaymentRequest.create({
-        userId,
-        merchantId,
-        paymentMethodId,
-        amount: total,
-        quantity: qty,
-        imageFileId: fileId,
-        status: 'pending'
+        userId, merchantId, paymentMethodId, amount: total, quantity: qty, imageFileId: fileId, status: 'pending'
       });
-
       const merchantName = (await Merchant.findByPk(merchantId)).nameEn;
       const admins = await Admin.findAll();
       for (const admin of admins) {
@@ -1401,7 +1452,6 @@ bot.on('message', async (msg) => {
         request.adminMessageId = adminMsg.message_id;
         await request.save();
       }
-
       await bot.sendMessage(userId, await getText(userId, 'paymentRequestPending'));
       await User.update({ state: null }, { where: { id: userId } });
       await sendMainMenu(userId);
@@ -1417,7 +1467,6 @@ bot.on('message', async (msg) => {
 
     const result = await redeemCard(cardCode, merchantId);
     await bot.deleteMessage(userId, waitingMsg.message_id);
-
     if (result.success) {
       const cardDetails = formatCardDetails(result.data);
       const successMsg = await getText(userId, 'redeemSuccess', { details: cardDetails });
@@ -1426,7 +1475,6 @@ bot.on('message', async (msg) => {
       const failMsg = await getText(userId, 'redeemFailed', { reason: result.reason });
       await bot.sendMessage(userId, failMsg);
     }
-
     await User.update({ state: null }, { where: { id: userId } });
     await sendMainMenu(userId);
     return;
