@@ -48,7 +48,8 @@ const T = {
     viewItems: "📦 View inventory",
     activateBot: "⚙️ Activate bot",
     deactivateBot: "⚙️ Deactivate bot",
-    sendNotification: "📣 Send Notification"
+    sendNotification: "📣 Send Notification",
+    enterPrice: "💰 Enter the price for the item"
   },
   ar: {
     start: "🌍 اختر اللغة",
@@ -68,7 +69,8 @@ const T = {
     viewItems: "📦 عرض المخزون",
     activateBot: "⚙️ تفعيل البوت",
     deactivateBot: "⚙️ إيقاف البوت",
-    sendNotification: "📣 إرسال إشعار"
+    sendNotification: "📣 إرسال إشعار",
+    enterPrice: "💰 أدخل سعر العنصر"
   }
 };
 
@@ -128,7 +130,7 @@ function viewInventory(id) {
 
   let inventoryText = "📦 Inventory:\n";
   codes.forEach((item, index) => {
-    inventoryText += `${index + 1}. ${item}\n`;
+    inventoryText += `${index + 1}. ${item.code} - $${item.price}\n`;
   });
 
   bot.sendMessage(id, inventoryText);
@@ -198,7 +200,8 @@ bot.on("callback_query", async (q) => {
   const data = q.data;
 
   if (data === "add_item") {
-    return bot.sendMessage(id, "🔧 Send the item you want to add to inventory");
+    userState[id] = "adding_item"; // تعيين حالة الأدمن لإضافة عنصر
+    return bot.sendMessage(id, T[userLang[id]].enterPrice);
   }
 
   if (data === "view_inventory") {
@@ -229,10 +232,25 @@ bot.on("message", async (msg) => {
     return showAdminMenu(id);
   }
 
-  if (id === 643309456 && text.startsWith("add_item")) {
-    const item = text.split(" ")[1];
-    codes.push(item);
-    return bot.sendMessage(id, `✅ Item "${item}" added to inventory`);
+  if (id === 643309456 && userState[id] === "adding_item") {
+    const code = text; // العنصر المدخل من قبل الأدمن
+    userState[id] = "setting_price"; // الانتقال لإعداد السعر
+
+    return bot.sendMessage(id, T[userLang[id]].enterPrice);
+  }
+
+  if (id === 643309456 && userState[id] === "setting_price") {
+    const price = parseFloat(text);
+    if (isNaN(price)) {
+      return bot.sendMessage(id, "❌ Invalid price. Please enter a valid number.");
+    }
+
+    // إضافة العنصر إلى المخزون
+    codes.push({ code: text, price: price });
+
+    userState[id] = null; // إعادة تعيين حالة الأدمن
+
+    return bot.sendMessage(id, `✅ Item added to inventory: ${text} with price $${price}`);
   }
 
   if (id === 643309456 && text.startsWith("send_notification")) {
@@ -275,7 +293,7 @@ bot.on("message", async (msg) => {
 
     let result = "";
     for (let i = 0; i < pendingBuy[id].qty; i++) {
-      result += codes.pop() + "\n";
+      result += codes.pop().code + "\n";
     }
 
     pendingBuy[id] = null;
