@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 const TOKEN = "2006778841:AAEGzMAkfk_CtdAvgK-M5pPx8wJlXMqhzEI";
-const WALLET = "PUT_TRC20_ADDRESS";  // تأكد من وضع عنوان محفظتك هنا
+const WALLET = "PUT_TRC20_ADDRESS";
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
@@ -15,8 +15,6 @@ let userLang = {};
 let userState = {};
 let pendingBuy = {};
 let codes = [];
-let users = [];
-let botActive = true; // خاصية تشغيل أو إيقاف البوت
 
 const PRICE = 2.5;
 
