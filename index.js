@@ -1,5 +1,5 @@
 // ========================
-// index.js
+// index.js - البوت المتكامل مع جميع الميزات
 // ========================
 require('dotenv').config();
 const express = require('express');
@@ -24,7 +24,7 @@ const app = express();
 app.use(express.json());
 
 // ========================
-// 2. قاعدة البيانات
+// 2. قاعدة البيانات (Sequelize)
 // ========================
 const sequelize = new Sequelize(DATABASE_URL, {
   dialect: 'postgres',
@@ -32,7 +32,7 @@ const sequelize = new Sequelize(DATABASE_URL, {
   dialectOptions: { ssl: { require: true, rejectUnauthorized: false } }
 });
 
-// نماذج البيانات (نفس السابق مع إضافات)
+// تعريف النماذج (Models)
 const User = sequelize.define('User', {
   id: { type: DataTypes.BIGINT, primaryKey: true },
   lang: { type: DataTypes.STRING(2), defaultValue: 'en' },
@@ -111,7 +111,7 @@ const BotService = sequelize.define('BotService', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   token: { type: DataTypes.STRING, unique: true, allowNull: false },
   name: { type: DataTypes.STRING, allowNull: false },
-  allowedActions: { type: DataTypes.JSONB, defaultValue: [] }, // ['redeem', 'buy', 'stats']
+  allowedActions: { type: DataTypes.JSONB, defaultValue: [] },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true }
 });
 
@@ -232,7 +232,6 @@ const DEFAULT_TEXTS = {
     replyToSupport: 'Reply to this user:',
     sendReply: 'Send your reply:',
     supportReplySent: '✅ Reply sent to user.',
-    // نصوص خاصة بالاسترداد
     redeemSuccess: '✅ Card redeemed successfully!\n\n💳 Card Details:\n{details}',
     redeemFailed: '❌ Failed to redeem card: {reason}',
     sendCode: '✍️ Send the card code:'
@@ -366,14 +365,13 @@ async function isAdmin(userId, requireSuper = false) {
 }
 
 async function sendMainMenu(userId) {
-  const t = (key, repl) => getText(userId, key, repl);
-  const menuText = await t('menu');
+  const menuText = await getText(userId, 'menu');
   const keyboard = {
     inline_keyboard: [
-      [{ text: await t('redeem'), callback_data: 'redeem' }],
-      [{ text: await t('buy'), callback_data: 'buy' }],
-      [{ text: await t('support'), callback_data: 'support' }],
-      ...((await isAdmin(userId)) ? [[{ text: await t('adminPanel'), callback_data: 'admin' }]] : [])
+      [{ text: await getText(userId, 'redeem'), callback_data: 'redeem' }],
+      [{ text: await getText(userId, 'buy'), callback_data: 'buy' }],
+      [{ text: await getText(userId, 'support'), callback_data: 'support' }],
+      ...((await isAdmin(userId)) ? [[{ text: await getText(userId, 'adminPanel'), callback_data: 'admin' }]] : [])
     ]
   };
   await bot.sendMessage(userId, menuText, { reply_markup: keyboard });
@@ -381,33 +379,28 @@ async function sendMainMenu(userId) {
 
 async function showAdminPanel(userId) {
   if (!(await isAdmin(userId))) return;
-  const t = (key) => getText(userId, key);
-  const panelText = await t('adminPanel');
+  const panelText = await getText(userId, 'adminPanel');
   const keyboard = {
     inline_keyboard: [
-      [{ text: await t('manageAdmins'), callback_data: 'admin_manage_admins' }],
-      [{ text: await t('manageTexts'), callback_data: 'admin_manage_texts' }],
-      [{ text: await t('manageApis'), callback_data: 'admin_manage_apis' }],
-      [{ text: await t('manageBots'), callback_data: 'admin_manage_bots' }],
-      [{ text: await t('generalSettings'), callback_data: 'admin_general_settings' }],
-      [{ text: await t('addMerchant'), callback_data: 'admin_add_merchant' }],
-      [{ text: await t('listMerchants'), callback_data: 'admin_list_merchants' }],
-      [{ text: await t('setPrice'), callback_data: 'admin_set_price' }],
-      [{ text: await t('addCodes'), callback_data: 'admin_add_codes' }],
-      [{ text: await t('paymentMethods'), callback_data: 'admin_payment_methods' }],
-      [{ text: await t('stats'), callback_data: 'admin_stats' }],
-      [{ text: await t('back'), callback_data: 'back_to_menu' }]
+      [{ text: await getText(userId, 'manageAdmins'), callback_data: 'admin_manage_admins' }],
+      [{ text: await getText(userId, 'manageTexts'), callback_data: 'admin_manage_texts' }],
+      [{ text: await getText(userId, 'manageApis'), callback_data: 'admin_manage_apis' }],
+      [{ text: await getText(userId, 'manageBots'), callback_data: 'admin_manage_bots' }],
+      [{ text: await getText(userId, 'generalSettings'), callback_data: 'admin_general_settings' }],
+      [{ text: await getText(userId, 'addMerchant'), callback_data: 'admin_add_merchant' }],
+      [{ text: await getText(userId, 'listMerchants'), callback_data: 'admin_list_merchants' }],
+      [{ text: await getText(userId, 'setPrice'), callback_data: 'admin_set_price' }],
+      [{ text: await getText(userId, 'addCodes'), callback_data: 'admin_add_codes' }],
+      [{ text: await getText(userId, 'paymentMethods'), callback_data: 'admin_payment_methods' }],
+      [{ text: await getText(userId, 'stats'), callback_data: 'admin_stats' }],
+      [{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]
     ]
   };
   await bot.sendMessage(userId, panelText, { reply_markup: keyboard });
 }
 
-// ========================
-// 4. دوال الاسترداد (مُصلحة)
-// ========================
+// دوال الاسترداد
 async function redeemCard(cardKey, merchantId, platformId = '1') {
-  // يمكن استدعاء API خارجي (node-card.com)
-  // نستخدم مفاتيح API المخزنة إن وجدت
   let apiKeyRecord = await ApiKey.findOne({ where: { name: 'node_card' } });
   let apiKey = apiKeyRecord ? apiKeyRecord.key : null;
   let baseUrl = apiKeyRecord ? (apiKeyRecord.baseUrl || 'https://api.node-card.com') : 'https://api.node-card.com';
@@ -416,9 +409,7 @@ async function redeemCard(cardKey, merchantId, platformId = '1') {
   params.append('card_key', cardKey);
   params.append('merchant_dict_id', merchantId);
   params.append('platform_id', platformId);
-  if (apiKey) {
-    params.append('api_key', apiKey);
-  }
+  if (apiKey) params.append('api_key', apiKey);
 
   try {
     const response = await axios.post(`${baseUrl}/api/open/card/redeem`, params, {
@@ -435,14 +426,10 @@ async function redeemCard(cardKey, merchantId, platformId = '1') {
   }
 }
 
-// دالة لعرض تفاصيل البطاقة المستردة
 function formatCardDetails(cardData) {
   return `💳 ${cardData.card_number}\nCVV: ${cardData.cvv}\nEXP: ${cardData.exp}\n💰 ${cardData.available_amount}\n🏪 ${cardData.merchant_name}`;
 }
 
-// ========================
-// 5. دوال مساعدة للدفع التلقائي
-// ========================
 async function checkAutoPayment(txid, expectedAmount) {
   try {
     const res = await axios.get(`https://apilist.tronscan.org/api/transaction-info?hash=${txid}`);
@@ -454,8 +441,54 @@ async function checkAutoPayment(txid, expectedAmount) {
   }
 }
 
+// دوال عرض القوائم
+async function showMerchantsForBuy(userId) {
+  const merchants = await Merchant.findAll({ order: [['id', 'ASC']] });
+  if (merchants.length === 0) {
+    await bot.sendMessage(userId, '❌ No merchants available.');
+    return sendMainMenu(userId);
+  }
+  const lang = (await User.findByPk(userId)).lang;
+  const buttons = merchants.map(m => ([{
+    text: lang === 'en' ? m.nameEn : m.nameAr,
+    callback_data: `buy_merchant_${m.id}`
+  }]));
+  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
+  await bot.sendMessage(userId, await getText(userId, 'chooseMerchant'), { reply_markup: { inline_keyboard: buttons } });
+}
+
+async function showMerchantsForRedeem(userId) {
+  const merchants = await Merchant.findAll({ order: [['id', 'ASC']] });
+  if (merchants.length === 0) {
+    await bot.sendMessage(userId, '❌ No merchants available.');
+    return sendMainMenu(userId);
+  }
+  const lang = (await User.findByPk(userId)).lang;
+  const buttons = merchants.map(m => ([{
+    text: lang === 'en' ? m.nameEn : m.nameAr,
+    callback_data: `redeem_merchant_${m.id}`
+  }]));
+  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
+  await bot.sendMessage(userId, await getText(userId, 'chooseMerchant'), { reply_markup: { inline_keyboard: buttons } });
+}
+
+async function showPaymentMethods(userId, merchantId, qty, total) {
+  const methods = await PaymentMethod.findAll({ where: { merchantId } });
+  if (methods.length === 0) {
+    await bot.sendMessage(userId, await getText(userId, 'noPaymentMethods'));
+    return sendMainMenu(userId);
+  }
+  const lang = (await User.findByPk(userId)).lang;
+  const buttons = methods.map(m => ([{
+    text: lang === 'en' ? m.nameEn : m.nameAr,
+    callback_data: `pay_method_${m.id}_${merchantId}_${qty}_${total}`
+  }]));
+  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
+  await bot.sendMessage(userId, await getText(userId, 'choosePaymentMethod'), { reply_markup: { inline_keyboard: buttons } });
+}
+
 // ========================
-// 6. أوامر البوت الأساسية
+// 4. أوامر البوت الأساسية
 // ========================
 bot.onText(/\/start/, async (msg) => {
   const userId = msg.chat.id;
@@ -478,7 +511,7 @@ bot.onText(/\/admin/, async (msg) => {
 });
 
 // ========================
-// 7. معالجة callback_query (مختصرة لكن كاملة)
+// 5. معالجة callback_query (جميع الأزرار)
 // ========================
 bot.on('callback_query', async (query) => {
   const userId = query.message.chat.id;
@@ -486,6 +519,7 @@ bot.on('callback_query', async (query) => {
 
   await User.findOrCreate({ where: { id: userId }, defaults: { lang: 'en' } });
 
+  // اختيار اللغة
   if (data.startsWith('lang_')) {
     const newLang = data.split('_')[1];
     await User.update({ lang: newLang }, { where: { id: userId } });
@@ -494,18 +528,14 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // العودة للقائمة الرئيسية
   if (data === 'back_to_menu') {
     await sendMainMenu(userId);
     await bot.answerCallbackQuery(query.id);
     return;
   }
 
-  if (data === 'admin' && (await isAdmin(userId))) {
-    await showAdminPanel(userId);
-    await bot.answerCallbackQuery(query.id);
-    return;
-  }
-
+  // الدعم الفني
   if (data === 'support') {
     await User.update({ state: JSON.stringify({ action: 'support' }) }, { where: { id: userId } });
     await bot.sendMessage(userId, await getText(userId, 'sendReply'));
@@ -513,9 +543,340 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // استرداد الكود من المستخدم
-  if (data === 'redeem') {
-    // نعرض قائمة التجار
+  // لوحة الأدمن الرئيسية
+  if (data === 'admin' && (await isAdmin(userId))) {
+    await showAdminPanel(userId);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ========================
+  // إدارة المدراء (super admin only)
+  // ========================
+  if (data === 'admin_manage_admins' && (await isAdmin(userId, true))) {
+    const t = (key) => getText(userId, key);
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: await t('addAdmin'), callback_data: 'admin_add_admin' }],
+        [{ text: await t('listAdmins'), callback_data: 'admin_list_admins' }],
+        [{ text: await t('removeAdmin'), callback_data: 'admin_remove_admin' }],
+        [{ text: await t('back'), callback_data: 'admin' }]
+      ]
+    };
+    await bot.sendMessage(userId, await t('manageAdmins'), { reply_markup: keyboard });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_add_admin' && (await isAdmin(userId, true))) {
+    await User.update({ state: JSON.stringify({ action: 'add_admin' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterAdminId'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_list_admins' && (await isAdmin(userId, true))) {
+    const admins = await Admin.findAll();
+    let text = await getText(userId, 'adminList');
+    for (const a of admins) {
+      const role = a.role === 'super_admin' ? '👑 Super Admin' : '🛠️ Admin';
+      text += `${a.id} - ${role}\n`;
+    }
+    await bot.sendMessage(userId, text);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_remove_admin' && (await isAdmin(userId, true))) {
+    const admins = await Admin.findAll({ where: { role: 'admin' } });
+    if (admins.length === 0) {
+      await bot.sendMessage(userId, 'No admins to remove.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const t = (key) => getText(userId, key);
+    const buttons = admins.map(a => ([{ text: `${a.id}`, callback_data: `admin_remove_confirm_${a.id}` }]));
+    buttons.push([{ text: await t('back'), callback_data: 'admin_manage_admins' }]);
+    await bot.sendMessage(userId, 'Select admin to remove:', { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_remove_confirm_') && (await isAdmin(userId, true))) {
+    const removeId = parseInt(data.split('_')[3]);
+    if (removeId === userId) {
+      await bot.sendMessage(userId, '❌ You cannot remove yourself.');
+    } else {
+      await Admin.destroy({ where: { id: removeId } });
+      await bot.sendMessage(userId, await getText(userId, 'adminRemoved'));
+    }
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ========================
+  // إدارة النصوص
+  // ========================
+  if (data === 'admin_manage_texts' && (await isAdmin(userId))) {
+    const keys = Object.keys(DEFAULT_TEXTS.en);
+    const buttons = keys.slice(0, 20).map(k => ([{ text: k, callback_data: `admin_edit_text_${k}` }]));
+    buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin' }]);
+    await bot.sendMessage(userId, await getText(userId, 'selectTextKey'), { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_edit_text_') && (await isAdmin(userId))) {
+    const key = data.split('_')[3];
+    await User.update({ state: JSON.stringify({ action: 'edit_text', key }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterNewText'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ========================
+  // إدارة APIs
+  // ========================
+  if (data === 'admin_manage_apis' && (await isAdmin(userId))) {
+    const t = (key) => getText(userId, key);
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: await t('addApiKey'), callback_data: 'admin_add_api' }],
+        [{ text: await t('listApiKeys'), callback_data: 'admin_list_apis' }],
+        [{ text: await t('deleteApiKey'), callback_data: 'admin_delete_api' }],
+        [{ text: await t('back'), callback_data: 'admin' }]
+      ]
+    };
+    await bot.sendMessage(userId, await t('manageApis'), { reply_markup: keyboard });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_add_api' && (await isAdmin(userId))) {
+    await User.update({ state: JSON.stringify({ action: 'add_api', step: 'name' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterApiName'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_list_apis' && (await isAdmin(userId))) {
+    const apis = await ApiKey.findAll();
+    let text = await getText(userId, 'apiKeyList');
+    for (const api of apis) {
+      text += `ID: ${api.id} - ${api.name}\nKey: ${api.key}\nSecret: ${api.secret || 'N/A'}\nBase URL: ${api.baseUrl || 'N/A'}\n\n`;
+    }
+    await bot.sendMessage(userId, text);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_delete_api' && (await isAdmin(userId))) {
+    const apis = await ApiKey.findAll();
+    if (apis.length === 0) {
+      await bot.sendMessage(userId, 'No APIs to delete.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const t = (key) => getText(userId, key);
+    const buttons = apis.map(api => ([{ text: api.name, callback_data: `admin_delete_api_confirm_${api.id}` }]));
+    buttons.push([{ text: await t('back'), callback_data: 'admin_manage_apis' }]);
+    await bot.sendMessage(userId, await t('selectApiToDelete'), { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_delete_api_confirm_') && (await isAdmin(userId))) {
+    const apiId = parseInt(data.split('_')[4]);
+    await ApiKey.destroy({ where: { id: apiId } });
+    await bot.sendMessage(userId, await getText(userId, 'apiKeyDeleted'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ========================
+  // إدارة البوتات
+  // ========================
+  if (data === 'admin_manage_bots' && (await isAdmin(userId))) {
+    const t = (key) => getText(userId, key);
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: await t('addBot'), callback_data: 'admin_add_bot' }],
+        [{ text: await t('listBots'), callback_data: 'admin_list_bots' }],
+        [{ text: await t('removeBot'), callback_data: 'admin_remove_bot' }],
+        [{ text: await t('botStats'), callback_data: 'admin_bot_stats' }],
+        [{ text: await t('back'), callback_data: 'admin' }]
+      ]
+    };
+    await bot.sendMessage(userId, await t('manageBots'), { reply_markup: keyboard });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_add_bot' && (await isAdmin(userId))) {
+    await User.update({ state: JSON.stringify({ action: 'add_bot', step: 'token' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterBotToken'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_list_bots' && (await isAdmin(userId))) {
+    const bots = await BotService.findAll();
+    let text = '🤖 Bots:\n';
+    for (const b of bots) {
+      text += `ID: ${b.id} - ${b.name} (Active: ${b.isActive})\nAllowed: ${b.allowedActions.join(', ')}\n`;
+    }
+    await bot.sendMessage(userId, text);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_remove_bot' && (await isAdmin(userId))) {
+    const bots = await BotService.findAll();
+    if (bots.length === 0) {
+      await bot.sendMessage(userId, 'No bots to remove.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const t = (key) => getText(userId, key);
+    const buttons = bots.map(b => ([{ text: b.name, callback_data: `admin_remove_bot_confirm_${b.id}` }]));
+    buttons.push([{ text: await t('back'), callback_data: 'admin_manage_bots' }]);
+    await bot.sendMessage(userId, 'Select bot to remove:', { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_remove_bot_confirm_') && (await isAdmin(userId))) {
+    const botId = parseInt(data.split('_')[4]);
+    await BotService.destroy({ where: { id: botId } });
+    await bot.sendMessage(userId, await getText(userId, 'botRemoved'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_bot_stats' && (await isAdmin(userId))) {
+    const bots = await BotService.findAll({ include: BotStat });
+    let text = '';
+    for (const b of bots) {
+      text += `📊 ${b.name}:\n`;
+      for (const stat of b.BotStats) {
+        text += `  ${stat.action}: ${stat.count} times (last: ${stat.lastUsed})\n`;
+      }
+      text += '\n';
+    }
+    await bot.sendMessage(userId, text || 'No stats yet.');
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ========================
+  // الإعدادات العامة
+  // ========================
+  if (data === 'admin_general_settings' && (await isAdmin(userId))) {
+    const t = (key) => getText(userId, key);
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: await t('setDefaultPrice'), callback_data: 'admin_set_default_price' }],
+        [{ text: await t('setWallet'), callback_data: 'admin_set_default_wallet' }],
+        [{ text: await t('back'), callback_data: 'admin' }]
+      ]
+    };
+    await bot.sendMessage(userId, await t('generalSettings'), { reply_markup: keyboard });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_set_default_price' && (await isAdmin(userId))) {
+    await User.update({ state: JSON.stringify({ action: 'set_default_price' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterDefaultPrice'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_set_default_wallet' && (await isAdmin(userId))) {
+    await User.update({ state: JSON.stringify({ action: 'set_default_wallet' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterDefaultWallet'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ========================
+  // إدارة التجار
+  // ========================
+  if (data === 'admin_add_merchant' && (await isAdmin(userId))) {
+    await User.update({ state: JSON.stringify({ action: 'add_merchant', step: 'nameEn' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'askMerchantNameEn'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_list_merchants' && (await isAdmin(userId))) {
+    const merchants = await Merchant.findAll();
+    if (merchants.length === 0) {
+      await bot.sendMessage(userId, '📭 No merchants yet.');
+    } else {
+      let text = await getText(userId, 'merchantList');
+      merchants.forEach(m => {
+        text += `ID: ${m.id} | EN: ${m.nameEn} | AR: ${m.nameAr} | Price: ${m.price} USDT\n`;
+      });
+      await bot.sendMessage(userId, text);
+    }
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_set_price' && (await isAdmin(userId))) {
+    const merchants = await Merchant.findAll();
+    if (merchants.length === 0) {
+      await bot.sendMessage(userId, '❌ No merchants to set price.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const lang = (await User.findByPk(userId)).lang;
+    const buttons = merchants.map(m => ([{
+      text: lang === 'en' ? m.nameEn : m.nameAr,
+      callback_data: `admin_setprice_${m.id}`
+    }]));
+    buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin' }]);
+    await bot.sendMessage(userId, await getText(userId, 'selectMerchantToSetPrice'), { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_setprice_') && (await isAdmin(userId))) {
+    const merchantId = parseInt(data.split('_')[2]);
+    await User.update({ state: JSON.stringify({ action: 'set_price', merchantId }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterPrice'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_add_codes' && (await isAdmin(userId))) {
+    const merchants = await Merchant.findAll();
+    if (merchants.length === 0) {
+      await bot.sendMessage(userId, '❌ No merchants to add codes.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const lang = (await User.findByPk(userId)).lang;
+    const buttons = merchants.map(m => ([{
+      text: lang === 'en' ? m.nameEn : m.nameAr,
+      callback_data: `admin_addcodes_${m.id}`
+    }]));
+    buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin' }]);
+    await bot.sendMessage(userId, await getText(userId, 'selectMerchantToAddCodes'), { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_addcodes_') && (await isAdmin(userId))) {
+    const merchantId = parseInt(data.split('_')[2]);
+    await User.update({ state: JSON.stringify({ action: 'add_codes', merchantId }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterCodes'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_payment_methods' && (await isAdmin(userId))) {
     const merchants = await Merchant.findAll();
     if (merchants.length === 0) {
       await bot.sendMessage(userId, '❌ No merchants available.');
@@ -525,10 +886,125 @@ bot.on('callback_query', async (query) => {
     const lang = (await User.findByPk(userId)).lang;
     const buttons = merchants.map(m => ([{
       text: lang === 'en' ? m.nameEn : m.nameAr,
-      callback_data: `redeem_merchant_${m.id}`
+      callback_data: `admin_paymethods_merchant_${m.id}`
     }]));
-    buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
-    await bot.sendMessage(userId, await getText(userId, 'chooseMerchant'), { reply_markup: { inline_keyboard: buttons } });
+    buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin' }]);
+    await bot.sendMessage(userId, await getText(userId, 'selectMerchantForPaymentMethods'), { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_paymethods_merchant_') && (await isAdmin(userId))) {
+    const merchantId = parseInt(data.split('_')[3]);
+    const methods = await PaymentMethod.findAll({ where: { merchantId } });
+    let methodsText = '';
+    if (methods.length) {
+      methodsText = methods.map(m => `ID: ${m.id} | ${(await User.findByPk(userId)).lang === 'en' ? m.nameEn : m.nameAr}\n${m.details}\n`).join('\n');
+    } else {
+      methodsText = await getText(userId, 'noPaymentMethods');
+    }
+    const buttons = [
+      [{ text: await getText(userId, 'addPaymentMethod'), callback_data: `admin_addpaymethod_${merchantId}` }],
+      ...(methods.length ? [[{ text: await getText(userId, 'deletePaymentMethod'), callback_data: `admin_delpaymethod_${merchantId}` }]] : []),
+      [{ text: await getText(userId, 'back'), callback_data: 'admin_payment_methods' }]
+    ];
+    await bot.sendMessage(userId, `${await getText(userId, 'paymentMethods')}:\n${methodsText}`, { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_addpaymethod_') && (await isAdmin(userId))) {
+    const merchantId = parseInt(data.split('_')[2]);
+    await User.update({ state: JSON.stringify({ action: 'add_payment_method', merchantId, step: 'nameEn' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'enterPaymentNameEn'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_delpaymethod_') && (await isAdmin(userId))) {
+    const merchantId = parseInt(data.split('_')[2]);
+    const methods = await PaymentMethod.findAll({ where: { merchantId } });
+    if (methods.length === 0) {
+      await bot.sendMessage(userId, await getText(userId, 'noPaymentMethods'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const lang = (await User.findByPk(userId)).lang;
+    const buttons = methods.map(m => ([{
+      text: lang === 'en' ? m.nameEn : m.nameAr,
+      callback_data: `admin_delpaymethod_confirm_${m.id}`
+    }]));
+    buttons.push([{ text: await getText(userId, 'back'), callback_data: `admin_paymethods_merchant_${merchantId}` }]);
+    await bot.sendMessage(userId, await getText(userId, 'selectPaymentMethodToDelete'), { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_delpaymethod_confirm_') && (await isAdmin(userId))) {
+    const methodId = parseInt(data.split('_')[3]);
+    await PaymentMethod.destroy({ where: { id: methodId } });
+    await bot.sendMessage(userId, await getText(userId, 'paymentMethodDeleted'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'admin_stats' && (await isAdmin(userId))) {
+    const totalCodes = await Code.count({ where: { isUsed: false } });
+    const completedSales = await Transaction.sum('amount', { where: { status: 'completed' } }) || 0;
+    const pendingCount = await ManualPaymentRequest.count({ where: { status: 'pending' } });
+    const statsText = `${await getText(userId, 'totalCodes', { count: totalCodes })}\n${await getText(userId, 'totalSales', { amount: completedSales })}\n${await getText(userId, 'pendingPurchases', { count: pendingCount })}`;
+    await bot.sendMessage(userId, statsText);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ========================
+  // عمليات المستخدم (شراء واسترداد)
+  // ========================
+  if (data === 'buy') {
+    await showMerchantsForBuy(userId);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === 'redeem') {
+    await showMerchantsForRedeem(userId);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('buy_merchant_')) {
+    const merchantId = parseInt(data.split('_')[2]);
+    const available = await Code.count({ where: { merchantId, isUsed: false } });
+    if (available === 0) {
+      await bot.sendMessage(userId, await getText(userId, 'noCodes'));
+      await sendMainMenu(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    await User.update({ state: JSON.stringify({ action: 'buy', merchantId }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, `${await getText(userId, 'enterQty')}\n📦 Available: ${available}`);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('pay_method_')) {
+    const parts = data.split('_');
+    const methodId = parseInt(parts[2]);
+    const merchantId = parseInt(parts[3]);
+    const qty = parseInt(parts[4]);
+    const total = parseFloat(parts[5]);
+    const method = await PaymentMethod.findByPk(methodId);
+    if (!method) {
+      await bot.sendMessage(userId, await getText(userId, 'error'));
+      return sendMainMenu(userId);
+    }
+    await User.update({ state: JSON.stringify({ action: 'awaiting_tx', merchantId, qty, total, paymentMethodId: methodId }) }, { where: { id: userId } });
+    if (method.type === 'auto') {
+      await bot.sendMessage(userId, `${await getText(userId, 'pay')}\n\n${method.details}\n\n${await getText(userId, 'sendTx')}`);
+    } else {
+      await bot.sendMessage(userId, `${await getText(userId, 'pay')}\n\n${method.details}\n\n${await getText(userId, 'sendImage')}`);
+    }
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -541,36 +1017,424 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // باقي الأزرار (إدارة الأدمن، النصوص، إلخ) مشابهة للسابق، لكني سأختصرها هنا لضيق المساحة.
-  // لضمان عدم قطع الكود، سأقوم بتضمين الأجزاء المهمة فقط، مع التأكيد على أن باقي الأزرار تعمل كما هو.
-  // نظرًا لطول الكود، سأضع النقاط التالية للإشارة إلى أن جميع الوظائف السابقة موجودة ولكنها مختصرة.
+  // ========================
+  // معالجة موافقة/رفض طلبات الدفع اليدوي (خاص بالأدمن)
+  // ========================
+  if (data.startsWith('approve_payment_')) {
+    if (!(await isAdmin(userId))) {
+      await bot.answerCallbackQuery(query.id, { text: 'Unauthorized', show_alert: true });
+      return;
+    }
+    const requestId = parseInt(data.split('_')[2]);
+    const request = await ManualPaymentRequest.findByPk(requestId, { include: [Merchant, PaymentMethod] });
+    if (!request || request.status !== 'pending') {
+      await bot.sendMessage(userId, 'Request not found or already processed.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
 
-  // ... (هنا سيتم وضع باقي معالجة الأزرار مثل admin_manage_admins, admin_manage_texts, admin_manage_apis, admin_manage_bots, admin_general_settings, admin_add_merchant, admin_list_merchants, admin_set_price, admin_add_codes, admin_payment_methods, admin_stats, وغيرها. كلها مشابهة للكود السابق ولكن مع استخدام getText.
+    // استخراج الأكواد
+    const codes = await Code.findAll({
+      where: { merchantId: request.merchantId, isUsed: false },
+      limit: request.quantity,
+      order: [['id', 'ASC']]
+    });
+    if (codes.length < request.quantity) {
+      await bot.sendMessage(userId, '❌ Not enough codes in stock to approve.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const codesList = codes.map(c => c.value).join('\n');
+    await Code.update({ isUsed: true, usedBy: request.userId, soldAt: new Date() }, { where: { id: codes.map(c => c.id) } });
 
-  // لكي لا يطول الكود أكثر، سأفترض أن هذه الأجزاء مضافة بشكل صحيح (يمكن نسخها من الإصدار السابق).
+    // تحديث حالة الطلب
+    request.status = 'approved';
+    await request.save();
 
+    // إرسال الأكواد للمستخدم
+    const userMsg = await getText(request.userId, 'paymentApproved');
+    await bot.sendMessage(request.userId, `${userMsg}\n\n${codesList}`);
+
+    // تحديث رسالة الأدمن
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: userId, message_id: request.adminMessageId });
+    await bot.sendMessage(userId, '✅ Payment approved and codes sent.');
+
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('reject_payment_')) {
+    if (!(await isAdmin(userId))) {
+      await bot.answerCallbackQuery(query.id, { text: 'Unauthorized', show_alert: true });
+      return;
+    }
+    const requestId = parseInt(data.split('_')[2]);
+    const request = await ManualPaymentRequest.findByPk(requestId);
+    if (!request || request.status !== 'pending') {
+      await bot.sendMessage(userId, 'Request not found or already processed.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    request.status = 'rejected';
+    await request.save();
+
+    // إبلاغ المستخدم
+    await bot.sendMessage(request.userId, await getText(request.userId, 'paymentRejected'));
+
+    // تحديث رسالة الأدمن
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: userId, message_id: request.adminMessageId });
+    await bot.sendMessage(userId, '❌ Payment rejected.');
+
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // الرد على الدعم (الأدمن)
+  if (data.startsWith('support_reply_')) {
+    if (!(await isAdmin(userId))) {
+      await bot.answerCallbackQuery(query.id, { text: 'Unauthorized', show_alert: true });
+      return;
+    }
+    const targetUserId = parseInt(data.split('_')[2]);
+    await User.update({ state: JSON.stringify({ action: 'support_reply', targetUserId }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, await getText(userId, 'sendReply'));
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // إذا لم يتم التعرف على callback
   await bot.answerCallbackQuery(query.id);
 });
 
 // ========================
-// 8. معالجة الرسائل النصية
+// 6. معالجة الرسائل النصية والصور
 // ========================
 bot.on('message', async (msg) => {
   const userId = msg.chat.id;
   const text = msg.text;
-  if (!text || text.startsWith('/')) return;
+  const photo = msg.photo;
+  const caption = msg.caption;
 
   const user = await User.findByPk(userId);
   if (!user) return;
 
   let state = user.state ? JSON.parse(user.state) : null;
 
-  // معالجة إدخالات الأدمن (إضافة مدير، نصوص، API، بوتات)
+  // ========== معالجة إدخالات الأدمن ==========
   if (state && (await isAdmin(userId))) {
-    // ... (نفس السابق)
+    // إضافة مدير
+    if (state.action === 'add_admin') {
+      const newAdminId = parseInt(text);
+      if (isNaN(newAdminId)) {
+        await bot.sendMessage(userId, '❌ Invalid ID');
+      } else {
+        await Admin.findOrCreate({ where: { id: newAdminId }, defaults: { role: 'admin' } });
+        await bot.sendMessage(userId, await getText(userId, 'adminAdded'));
+      }
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+
+    // تعديل نص
+    if (state.action === 'edit_text') {
+      const key = state.key;
+      const lang = user.lang;
+      await updateText(key, lang, text);
+      await bot.sendMessage(userId, await getText(userId, 'textUpdated'));
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+
+    // إضافة API
+    if (state.action === 'add_api') {
+      if (state.step === 'name') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'key', name: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'enterApiKey'));
+        return;
+      } else if (state.step === 'key') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'secret', key: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'enterApiSecret'));
+        return;
+      } else if (state.step === 'secret') {
+        const secret = text === 'skip' ? null : text;
+        await User.update({ state: JSON.stringify({ ...state, step: 'baseUrl', secret }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'enterApiBaseUrl'));
+        return;
+      } else if (state.step === 'baseUrl') {
+        const baseUrl = text === 'skip' ? null : text;
+        await ApiKey.create({ name: state.name, key: state.key, secret: state.secret, baseUrl });
+        await bot.sendMessage(userId, await getText(userId, 'apiKeyAdded'));
+        await User.update({ state: null }, { where: { id: userId } });
+        return;
+      }
+    }
+
+    // إضافة بوت
+    if (state.action === 'add_bot') {
+      if (state.step === 'token') {
+        try {
+          const testBot = new TelegramBot(text, { polling: false });
+          const me = await testBot.getMe();
+          await User.update({ state: JSON.stringify({ ...state, step: 'name', token: text, botName: me.username }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'enterBotName'));
+        } catch {
+          await bot.sendMessage(userId, '❌ Invalid token');
+          await User.update({ state: null }, { where: { id: userId } });
+        }
+        return;
+      } else if (state.step === 'name') {
+        // يمكن جعل اختيار الصلاحيات أكثر تفصيلاً، ولكن سنضع صلاحية الاسترداد كافتراضية
+        await BotService.create({ token: state.token, name: text, allowedActions: ['redeem'] });
+        await bot.sendMessage(userId, await getText(userId, 'botAdded'));
+        await User.update({ state: null }, { where: { id: userId } });
+        return;
+      }
+    }
+
+    // تعديل السعر الافتراضي
+    if (state.action === 'set_default_price') {
+      const price = parseFloat(text);
+      if (isNaN(price)) {
+        await bot.sendMessage(userId, '❌ Invalid price');
+      } else {
+        await updateText('default_price', 'en', price.toString());
+        await updateText('default_price', 'ar', price.toString());
+        await bot.sendMessage(userId, await getText(userId, 'defaultPriceUpdated'));
+      }
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+
+    // تعديل المحفظة الافتراضية
+    if (state.action === 'set_default_wallet') {
+      await updateText('default_wallet', 'en', text);
+      await updateText('default_wallet', 'ar', text);
+      await bot.sendMessage(userId, await getText(userId, 'defaultWalletUpdated'));
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+
+    // إضافة تاجر
+    if (state.action === 'add_merchant') {
+      if (state.step === 'nameEn') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'nameAr', nameEn: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'askMerchantNameAr'));
+        return;
+      } else if (state.step === 'nameAr') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'price', nameAr: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'askMerchantPrice'));
+        return;
+      } else if (state.step === 'price') {
+        const price = parseFloat(text);
+        if (isNaN(price)) {
+          await bot.sendMessage(userId, '❌ Invalid price.');
+          await User.update({ state: null }, { where: { id: userId } });
+          return;
+        }
+        const merchant = await Merchant.create({ nameEn: state.nameEn, nameAr: state.nameAr, price });
+        await bot.sendMessage(userId, (await getText(userId, 'merchantCreated')).replace('{id}', merchant.id));
+        await User.update({ state: null }, { where: { id: userId } });
+        await showAdminPanel(userId);
+        return;
+      }
+    }
+
+    // تعديل سعر تاجر
+    if (state.action === 'set_price') {
+      const price = parseFloat(text);
+      if (isNaN(price)) {
+        await bot.sendMessage(userId, '❌ Invalid price.');
+        await User.update({ state: null }, { where: { id: userId } });
+        return;
+      }
+      await Merchant.update({ price }, { where: { id: state.merchantId } });
+      await bot.sendMessage(userId, await getText(userId, 'priceUpdated'));
+      await User.update({ state: null }, { where: { id: userId } });
+      await showAdminPanel(userId);
+      return;
+    }
+
+    // إضافة أكواد
+    if (state.action === 'add_codes') {
+      const codes = text.split(/\s+/).filter(c => c.trim().length > 0);
+      if (codes.length === 0) {
+        await bot.sendMessage(userId, '❌ No codes found.');
+        await User.update({ state: null }, { where: { id: userId } });
+        return;
+      }
+      const codesToInsert = codes.map(code => ({ value: code, merchantId: state.merchantId, isUsed: false }));
+      await Code.bulkCreate(codesToInsert);
+      await bot.sendMessage(userId, `${await getText(userId, 'codesAdded')}\nAdded ${codes.length} codes.`);
+      await User.update({ state: null }, { where: { id: userId } });
+      await showAdminPanel(userId);
+      return;
+    }
+
+    // إضافة طريقة دفع
+    if (state.action === 'add_payment_method') {
+      if (state.step === 'nameEn') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'nameAr', nameEn: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'enterPaymentNameAr'));
+        return;
+      } else if (state.step === 'nameAr') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'details', nameAr: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'enterPaymentDetails'));
+        return;
+      } else if (state.step === 'details') {
+        await PaymentMethod.create({
+          merchantId: state.merchantId,
+          nameEn: state.nameEn,
+          nameAr: state.nameAr,
+          details: text,
+          type: 'manual' // يمكن جعلها اختيارية
+        });
+        await bot.sendMessage(userId, await getText(userId, 'paymentMethodAdded'));
+        await User.update({ state: null }, { where: { id: userId } });
+        await showAdminPanel(userId);
+        return;
+      }
+    }
+
+    // الرد على الدعم
+    if (state.action === 'support_reply') {
+      const targetUserId = state.targetUserId;
+      await bot.sendMessage(targetUserId, `📨 Support reply:\n\n${text}`);
+      await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
   }
 
-  // معالجة الاسترداد
+  // ========== معالجة الدعم من المستخدم ==========
+  if (state && state.action === 'support') {
+    const supportText = text;
+    const admins = await Admin.findAll();
+    for (const admin of admins) {
+      const notifText = await getText(admin.id, 'supportNotification', { userId, message: supportText });
+      await bot.sendMessage(admin.id, notifText);
+      await bot.sendMessage(admin.id, await getText(admin.id, 'replyToSupport'), {
+        reply_markup: {
+          inline_keyboard: [[{ text: 'Reply', callback_data: `support_reply_${userId}` }]]
+        }
+      });
+    }
+    await bot.sendMessage(userId, await getText(userId, 'supportMessageSent'));
+    await User.update({ state: null }, { where: { id: userId } });
+    return;
+  }
+
+  // ========== معالجة الشراء (إدخال الكمية) ==========
+  if (state && state.action === 'buy') {
+    const qty = parseInt(text);
+    if (isNaN(qty) || qty <= 0) {
+      await bot.sendMessage(userId, '❌ Invalid quantity.');
+      return;
+    }
+    const merchant = await Merchant.findByPk(state.merchantId);
+    if (!merchant) {
+      await bot.sendMessage(userId, '❌ Merchant not found.');
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+    const available = await Code.count({ where: { merchantId: merchant.id, isUsed: false } });
+    if (qty > available) {
+      await bot.sendMessage(userId, (await getText(userId, 'noCodes')) + ` (Available: ${available})`);
+      return;
+    }
+    const total = qty * merchant.price;
+    await showPaymentMethods(userId, merchant.id, qty, total);
+    await User.update({ state: JSON.stringify({ action: 'buy_selected', merchantId: merchant.id, qty, total }) }, { where: { id: userId } });
+    return;
+  }
+
+  // ========== معالجة الدفع الآلي (TXID) ==========
+  if (state && state.action === 'awaiting_tx') {
+    const { merchantId, qty, total, paymentMethodId } = state;
+    const method = await PaymentMethod.findByPk(paymentMethodId);
+    if (!method) {
+      await bot.sendMessage(userId, await getText(userId, 'error'));
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+
+    if (method.type === 'auto') {
+      // دفع آلي - تحقق من TXID
+      const txid = text.trim();
+      const existingTx = await Transaction.findOne({ where: { txid } });
+      if (existingTx) {
+        await bot.sendMessage(userId, '❌ This transaction ID has already been used.');
+        return;
+      }
+
+      const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'checking'));
+      const valid = await checkAutoPayment(txid, total);
+
+      if (!valid) {
+        await bot.editMessageText(await getText(userId, 'invalidTx'), { chat_id: userId, message_id: waitingMsg.message_id });
+        return;
+      }
+
+      await Transaction.create({ txid, userId, merchantId, paymentMethodId, amount: total, quantity: qty, status: 'completed' });
+
+      const codes = await Code.findAll({
+        where: { merchantId, isUsed: false },
+        limit: qty,
+        order: [['id', 'ASC']]
+      });
+      if (codes.length < qty) {
+        await bot.editMessageText(await getText(userId, 'noCodes'), { chat_id: userId, message_id: waitingMsg.message_id });
+        return;
+      }
+      const codesList = codes.map(c => c.value).join('\n');
+      await Code.update({ isUsed: true, usedBy: userId, soldAt: new Date() }, { where: { id: codes.map(c => c.id) } });
+      await bot.editMessageText(`${await getText(userId, 'success')}\n\n${codesList}`, { chat_id: userId, message_id: waitingMsg.message_id });
+      await User.update({ state: null }, { where: { id: userId } });
+      await sendMainMenu(userId);
+      return;
+    } else {
+      // دفع يدوي - انتظار صورة
+      if (!photo) {
+        await bot.sendMessage(userId, await getText(userId, 'sendImage'));
+        return;
+      }
+      const fileId = photo[photo.length - 1].file_id;
+      // إنشاء طلب دفع يدوي
+      const request = await ManualPaymentRequest.create({
+        userId,
+        merchantId,
+        paymentMethodId,
+        amount: total,
+        quantity: qty,
+        imageFileId: fileId,
+        status: 'pending'
+      });
+
+      // إرسال الطلب لجميع الأدمن
+      const merchantName = (await Merchant.findByPk(merchantId)).nameEn;
+      const admins = await Admin.findAll();
+      for (const admin of admins) {
+        const notifText = await getText(admin.id, 'manualPaymentRequest', { userId, merchant: merchantName, amount: total, quantity: qty });
+        const adminMsg = await bot.sendPhoto(admin.id, fileId, {
+          caption: notifText,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: await getText(admin.id, 'approve'), callback_data: `approve_payment_${request.id}` }],
+              [{ text: await getText(admin.id, 'reject'), callback_data: `reject_payment_${request.id}` }]
+            ]
+          }
+        });
+        request.adminMessageId = adminMsg.message_id;
+        await request.save();
+      }
+
+      await bot.sendMessage(userId, await getText(userId, 'paymentRequestPending'));
+      await User.update({ state: null }, { where: { id: userId } });
+      await sendMainMenu(userId);
+      return;
+    }
+  }
+
+  // ========== معالجة الاسترداد (كود البطاقة) ==========
   if (state && state.action === 'redeem') {
     const merchantId = state.merchantId;
     const cardCode = text.trim();
@@ -592,28 +1456,21 @@ bot.on('message', async (msg) => {
     await sendMainMenu(userId);
     return;
   }
-
-  // باقي الرسائل (الشراء، الدفع اليدوي، الدعم، إلخ) ستكون مشابهة للسابق.
-  // سأضيف هنا معالجة الشراء الأساسية وطلبات الدفع اليدوي.
 });
 
 // ========================
-// 9. API للبوتات الأخرى (استرداد الكودات)
+// 7. API للبوتات الأخرى (استرداد الكودات)
 // ========================
 app.post('/api/redeem', async (req, res) => {
   const { token, card_key, merchant_dict_id, platform_id } = req.body;
 
-  // التحقق من صحة التوكن
   const botService = await BotService.findOne({ where: { token, isActive: true } });
   if (!botService) {
     return res.status(401).json({ error: 'Invalid or inactive bot token' });
   }
-
-  // التحقق من أن البوت مسموح له باسترداد الكودات
   if (!botService.allowedActions.includes('redeem')) {
     return res.status(403).json({ error: 'Bot not allowed to redeem codes' });
   }
-
   if (!card_key || !merchant_dict_id) {
     return res.status(400).json({ error: 'Missing required fields: card_key, merchant_dict_id' });
   }
@@ -638,7 +1495,7 @@ app.post('/api/redeem', async (req, res) => {
 });
 
 // ========================
-// 10. تشغيل الخادم ومزامنة قاعدة البيانات
+// 8. تشغيل الخادم ومزامنة قاعدة البيانات
 // ========================
 sequelize.sync({ alter: true }).then(async () => {
   console.log('✅ Database synced');
