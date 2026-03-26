@@ -6,7 +6,6 @@ const express = require('express');
 const axios = require('axios');
 const TelegramBot = require('node-telegram-bot-api');
 const { Sequelize, DataTypes } = require('sequelize');
-const cron = require('node-cron'); // للجدولة
 
 // ========================
 // 1. إعدادات البيئة
@@ -56,7 +55,7 @@ const Merchant = sequelize.define('Merchant', {
   nameEn: { type: DataTypes.STRING, allowNull: false },
   nameAr: { type: DataTypes.STRING, allowNull: false },
   price: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 0 },
-  category: { type: DataTypes.STRING, defaultValue: 'general' } // تصنيف للتجار
+  category: { type: DataTypes.STRING, defaultValue: 'general' }
 });
 
 const PaymentMethod = sequelize.define('PaymentMethod', {
@@ -64,7 +63,7 @@ const PaymentMethod = sequelize.define('PaymentMethod', {
   nameEn: { type: DataTypes.STRING, allowNull: false },
   nameAr: { type: DataTypes.STRING, allowNull: false },
   details: { type: DataTypes.TEXT, allowNull: false },
-  type: { type: DataTypes.STRING, defaultValue: 'manual' }, // manual, auto
+  type: { type: DataTypes.STRING, defaultValue: 'manual' },
   config: { type: DataTypes.JSONB, defaultValue: {} },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
   minDeposit: { type: DataTypes.FLOAT, defaultValue: 1.0 },
@@ -78,18 +77,18 @@ const Code = sequelize.define('Code', {
   isUsed: { type: DataTypes.BOOLEAN, defaultValue: false },
   usedBy: { type: DataTypes.BIGINT, allowNull: true },
   soldAt: { type: DataTypes.DATE, allowNull: true },
-  expiresAt: { type: DataTypes.DATE, allowNull: true } // صلاحية الكود
+  expiresAt: { type: DataTypes.DATE, allowNull: true }
 });
 
 const BalanceTransaction = sequelize.define('BalanceTransaction', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   userId: { type: DataTypes.BIGINT, allowNull: false },
   amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-  type: { type: DataTypes.STRING, allowNull: false }, // 'deposit', 'purchase', 'referral', 'refund'
+  type: { type: DataTypes.STRING, allowNull: false },
   paymentMethodId: { type: DataTypes.INTEGER, references: { model: PaymentMethod, key: 'id' }, allowNull: true },
   txid: { type: DataTypes.STRING, allowNull: true },
   imageFileId: { type: DataTypes.STRING, allowNull: true },
-  status: { type: DataTypes.STRING, defaultValue: 'pending' }, // pending, completed, rejected
+  status: { type: DataTypes.STRING, defaultValue: 'pending' },
   adminMessageId: { type: DataTypes.BIGINT, allowNull: true },
   createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 });
@@ -125,7 +124,7 @@ const ReferralReward = sequelize.define('ReferralReward', {
   referrerId: { type: DataTypes.BIGINT, allowNull: false },
   referredId: { type: DataTypes.BIGINT, allowNull: false },
   amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-  status: { type: DataTypes.STRING, defaultValue: 'pending' } // pending, paid
+  status: { type: DataTypes.STRING, defaultValue: 'pending' }
 });
 
 // العلاقات
@@ -381,7 +380,6 @@ function isAdmin(userId) {
   return userId === ADMIN_ID;
 }
 
-// دوال عامة
 function generateReferralCode(userId) {
   return `REF${userId}${Date.now().toString(36)}`;
 }
@@ -396,29 +394,22 @@ async function getUserReferralLink(userId) {
   return `https://t.me/${botInfo.username}?start=ref_${user.referralCode}`;
 }
 
-// معالجة الإحالات
 async function handleReferral(userId, referralCode) {
   const referrer = await User.findOne({ where: { referralCode } });
   if (!referrer || referrer.id === userId) return false;
-  
-  // تحديث المستخدم الجديد
   await User.update({ referredBy: referrer.id }, { where: { id: userId } });
-  
-  // يمكن إضافة مكافأة فورية إذا تم تفعيلها
   return true;
 }
 
-// تطبيق كود الخصم
 async function applyDiscount(userId, discountCode, totalAmount) {
-  const discount = await DiscountCode.findOne({ 
-    where: { 
+  const discount = await DiscountCode.findOne({
+    where: {
       code: discountCode,
       validUntil: { [Sequelize.Op.gt]: new Date() },
       maxUses: { [Sequelize.Op.gt]: Sequelize.col('usedCount') }
-    } 
+    }
   });
   if (!discount) return { success: false, reason: 'invalid' };
-  
   const newTotal = totalAmount * (1 - discount.discountPercent / 100);
   discount.usedCount += 1;
   await discount.save();
@@ -481,7 +472,7 @@ async function showMerchantsForBuy(userId) {
   });
   const buttons = [];
   for (const [cat, list] of Object.entries(grouped)) {
-    buttons.push([{ text: `📂 ${cat}`, callback_data: `ignore` }]); // عنوان القسم
+    buttons.push([{ text: `📂 ${cat}`, callback_data: `ignore` }]);
     list.forEach(m => {
       buttons.push([{
         text: `${lang === 'en' ? m.nameEn : m.nameAr} - ${m.price} USD`,
@@ -543,7 +534,6 @@ async function showBotsList(userId) {
     };
     await bot.sendMessage(userId, `🤖 *${b.name}*\nID: ${b.id}\nAllowed: ${b.allowedActions.join(', ') || 'none'}\nOwner: ${b.ownerId || 'none'}`, { parse_mode: 'Markdown', reply_markup: keyboard });
   }
-  // زر إضافة بوت جديد
   const addBtn = {
     inline_keyboard: [[{ text: '➕ Add New Bot', callback_data: 'admin_add_bot' }]]
   };
@@ -580,7 +570,6 @@ function formatCardDetails(cardData) {
   return `💳 ${cardData.card_number}\nCVV: ${cardData.cvv}\nEXP: ${cardData.exp}\n💰 ${cardData.available_amount}\n🏪 ${cardData.merchant_name}`;
 }
 
-// دوال الدفع التلقائي
 async function checkAutoPayment(txid, expectedAmount) {
   try {
     const res = await axios.get(`https://apilist.tronscan.org/api/transaction-info?hash=${txid}`, { timeout: 8000 });
@@ -592,7 +581,6 @@ async function checkAutoPayment(txid, expectedAmount) {
   }
 }
 
-// دوال الشراء باستخدام الرصيد
 async function processPurchase(userId, merchantId, quantity, discountCode = null) {
   const merchant = await Merchant.findByPk(merchantId);
   if (!merchant) return { success: false, reason: 'Merchant not found' };
@@ -613,24 +601,19 @@ async function processPurchase(userId, merchantId, quantity, discountCode = null
   if (currentBalance < totalCost) {
     return { success: false, reason: 'Insufficient balance' };
   }
-  // حجز الكودات
   const codes = await Code.findAll({ where: { merchantId, isUsed: false }, limit: quantity, order: [['id', 'ASC']] });
   if (codes.length < quantity) {
     return { success: false, reason: 'Not enough codes in stock' };
   }
-  // بدء المعاملة
   const t = await sequelize.transaction();
   try {
-    // خصم الرصيد
     await User.update({ balance: currentBalance - totalCost, totalPurchases: user.totalPurchases + quantity }, { where: { id: userId }, transaction: t });
-    // تسجيل معاملة الرصيد
     await BalanceTransaction.create({
       userId,
       amount: -totalCost,
       type: 'purchase',
       status: 'completed'
     }, { transaction: t });
-    // تحديث الكودات
     await Code.update({ isUsed: true, usedBy: userId, soldAt: new Date() }, { where: { id: codes.map(c => c.id) }, transaction: t });
     await t.commit();
     const codesList = codes.map(c => c.value).join('\n');
@@ -642,7 +625,6 @@ async function processPurchase(userId, merchantId, quantity, discountCode = null
   }
 }
 
-// دوال الشحن
 async function requestDeposit(userId, amount, paymentMethodId, txidOrImage, isImage = false) {
   const method = await PaymentMethod.findByPk(paymentMethodId);
   if (!method) return { success: false, reason: 'Payment method not found' };
@@ -654,7 +636,6 @@ async function requestDeposit(userId, amount, paymentMethodId, txidOrImage, isIm
     status: 'pending',
     ...(isImage ? { imageFileId: txidOrImage } : { txid: txidOrImage })
   });
-  // إرسال إشعار للأدمن
   const notifText = await getText(ADMIN_ID, 'depositNotification', { userId, amount, method: method.nameEn });
   if (isImage) {
     await bot.sendPhoto(ADMIN_ID, txidOrImage, { caption: notifText });
@@ -686,7 +667,6 @@ async function approveDeposit(depositId, adminId) {
     const newBalance = parseFloat(user.balance) + parseFloat(deposit.amount);
     await User.update({ balance: newBalance }, { where: { id: deposit.userId }, transaction: t });
     await t.commit();
-    // إعلام المستخدم
     const successMsg = await getText(deposit.userId, 'depositSuccess', { balance: newBalance.toFixed(2) });
     await bot.sendMessage(deposit.userId, successMsg);
     return true;
@@ -708,7 +688,6 @@ async function rejectDeposit(depositId, adminId) {
   return true;
 }
 
-// دوال إحصائيات متقدمة
 async function exportStatsCSV() {
   const merchants = await Merchant.findAll({ include: Code });
   const users = await User.findAll();
@@ -727,8 +706,6 @@ async function exportStatsCSV() {
 }
 
 async function backupDatabase() {
-  // يمكن استخدام pg_dump أو نسخ الجداول
-  // سنقوم بتصدير الجداول الرئيسية كـ JSON
   const backup = {
     merchants: await Merchant.findAll(),
     users: await User.findAll(),
@@ -781,7 +758,6 @@ bot.on('callback_query', async (query) => {
   try {
     await User.findOrCreate({ where: { id: userId }, defaults: { lang: 'en', balance: 0, referralCode: generateReferralCode(userId) } });
 
-    // اختيار اللغة
     if (data.startsWith('lang_')) {
       const newLang = data.split('_')[1];
       await User.update({ lang: newLang }, { where: { id: userId } });
@@ -790,14 +766,12 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // العودة للقائمة الرئيسية
     if (data === 'back_to_menu') {
       await sendMainMenu(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
 
-    // الدعم الفني
     if (data === 'support') {
       await User.update({ state: JSON.stringify({ action: 'support' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'sendReply'));
@@ -805,14 +779,12 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // لوحة الأدمن الرئيسية
     if (data === 'admin' && isAdmin(userId)) {
       await showAdminPanel(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
 
-    // عرض الرصيد
     if (data === 'my_balance') {
       const user = await User.findByPk(userId);
       const balance = parseFloat(user.balance).toFixed(2);
@@ -821,7 +793,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // الإحالة
     if (data === 'referral') {
       const user = await User.findByPk(userId);
       const link = await getUserReferralLink(userId);
@@ -832,7 +803,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // كود الخصم
     if (data === 'discount') {
       await User.update({ state: JSON.stringify({ action: 'discount' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'enterDiscountCode'));
@@ -840,7 +810,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // مشترياتي
     if (data === 'my_purchases') {
       const purchases = await BalanceTransaction.findAll({ where: { userId, type: 'purchase', status: 'completed' }, order: [['createdAt', 'DESC']], limit: 20 });
       if (purchases.length === 0) {
@@ -856,7 +825,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // بدء عملية الشحن
     if (data === 'deposit') {
       await User.update({ state: JSON.stringify({ action: 'deposit_amount' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'enterDepositAmount', { min: 1, max: 10000 }));
@@ -864,7 +832,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // اختيار طريقة دفع للشحن (بعد إدخال المبلغ)
     if (data.startsWith('deposit_method_')) {
       const parts = data.split('_');
       const methodId = parseInt(parts[2]);
@@ -892,14 +859,12 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // إدارة البوتات (عرض القائمة)
     if (data === 'admin_manage_bots' && isAdmin(userId)) {
       await showBotsList(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
 
-    // إضافة بوت (بداية)
     if (data === 'admin_add_bot' && isAdmin(userId)) {
       await User.update({ state: JSON.stringify({ action: 'add_bot', step: 'token' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'enterBotToken'));
@@ -907,7 +872,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // منح صلاحية /code لبوت
     if (data.startsWith('bot_grant_code_') && isAdmin(userId)) {
       const botId = parseInt(data.split('_')[3]);
       const botService = await BotService.findByPk(botId);
@@ -923,7 +887,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // منح جميع الصلاحيات (يتطلب إدخال ID المالك)
     if (data.startsWith('bot_grant_full_') && isAdmin(userId)) {
       const botId = parseInt(data.split('_')[3]);
       await User.update({ state: JSON.stringify({ action: 'set_bot_owner', botId }) }, { where: { id: userId } });
@@ -932,7 +895,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // إزالة جميع الصلاحيات من بوت
     if (data.startsWith('bot_remove_perms_') && isAdmin(userId)) {
       const botId = parseInt(data.split('_')[3]);
       const botService = await BotService.findByPk(botId);
@@ -946,7 +908,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // حذف بوت
     if (data.startsWith('admin_remove_bot_confirm_') && isAdmin(userId)) {
       const botId = parseInt(data.split('_')[4]);
       await BotService.destroy({ where: { id: botId } });
@@ -955,7 +916,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // موافقة/رفض الإيداعات
     if (data.startsWith('approve_deposit_')) {
       if (!isAdmin(userId)) {
         await bot.answerCallbackQuery(query.id, { text: 'Unauthorized', show_alert: true });
@@ -980,7 +940,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // الشراء
     if (data === 'buy') {
       await showMerchantsForBuy(userId);
       await bot.answerCallbackQuery(query.id);
@@ -1016,7 +975,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // إحصائيات الأدمن
     if (data === 'admin_stats' && isAdmin(userId)) {
       const totalCodes = await Code.count();
       const usedCodes = await Code.count({ where: { isUsed: true } });
@@ -1030,7 +988,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // طرق الدفع
     if (data === 'admin_payment_methods' && isAdmin(userId)) {
       const methods = await PaymentMethod.findAll();
       let msg = '💳 Payment Methods:\n';
@@ -1050,7 +1007,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // إضافة تاجر
     if (data === 'admin_add_merchant' && isAdmin(userId)) {
       await User.update({ state: JSON.stringify({ action: 'add_merchant', step: 'nameEn' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'askMerchantNameEn'));
@@ -1058,7 +1014,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // قائمة التجار
     if (data === 'admin_list_merchants' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       let msg = await getText(userId, 'merchantList');
@@ -1078,7 +1033,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // تعديل السعر
     if (data === 'admin_set_price' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       let msg = await getText(userId, 'selectMerchantToSetPrice') + '\n';
@@ -1097,7 +1051,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // إضافة أكواد
     if (data === 'admin_add_codes' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       let msg = await getText(userId, 'selectMerchantToAddCodes') + '\n';
@@ -1116,7 +1069,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // إعدادات الإحالة
     if (data === 'admin_referral_settings' && isAdmin(userId)) {
       await User.update({ state: JSON.stringify({ action: 'set_referral_percent' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'setReferralPercent'));
@@ -1124,17 +1076,14 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // نسخ احتياطي
     if (data === 'admin_backup' && isAdmin(userId)) {
       const backup = await backupDatabase();
-      // إرسال كملف txt
       await bot.sendDocument(userId, Buffer.from(backup), { filename: 'backup.json', caption: 'Database backup' });
       await bot.sendMessage(userId, await getText(userId, 'backupSuccess'));
       await bot.answerCallbackQuery(query.id);
       return;
     }
 
-    // تصدير الإحصائيات CSV
     if (data === 'admin_export_stats' && isAdmin(userId)) {
       const csv = await exportStatsCSV();
       await bot.sendDocument(userId, Buffer.from(csv), { filename: 'stats.csv', caption: 'Statistics export' });
@@ -1143,7 +1092,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // تعديل تاجر (اختيار)
     if (data === 'admin_edit_merchant' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `edit_merchant_${m.id}` }]));
@@ -1161,7 +1109,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // حذف تاجر
     if (data === 'admin_delete_merchant' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `delete_merchant_${m.id}` }]));
@@ -1194,7 +1141,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // تعديل التصنيف
     if (data === 'admin_edit_category' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `edit_category_${m.id}` }]));
@@ -1212,7 +1158,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // إضافة طريقة دفع
     if (data === 'admin_add_payment' && isAdmin(userId)) {
       await User.update({ state: JSON.stringify({ action: 'add_payment_method', step: 'nameEn' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, 'Send payment method name in English:');
@@ -1220,7 +1165,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // حذف طريقة دفع
     if (data === 'admin_delete_payment' && isAdmin(userId)) {
       const methods = await PaymentMethod.findAll();
       const buttons = methods.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `delete_payment_${m.id}` }]));
@@ -1238,7 +1182,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // تعيين حدود الإيداع
     if (data === 'admin_set_limits' && isAdmin(userId)) {
       const methods = await PaymentMethod.findAll();
       const buttons = methods.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `set_limits_${m.id}` }]));
@@ -1255,8 +1198,6 @@ bot.on('callback_query', async (query) => {
       await bot.answerCallbackQuery(query.id);
       return;
     }
-
-    // باقي الإجراءات يمكن إضافتها بالمثل
 
     await bot.answerCallbackQuery(query.id);
   } catch (err) {
@@ -1279,9 +1220,7 @@ bot.on('message', async (msg) => {
 
     let state = user.state ? JSON.parse(user.state) : null;
 
-    // معالجة إدخالات الأدمن
     if (state && isAdmin(userId)) {
-      // إضافة بوت
       if (state.action === 'add_bot' && state.step === 'token') {
         try {
           const testBot = new TelegramBot(text, { polling: false });
@@ -1301,7 +1240,6 @@ bot.on('message', async (msg) => {
         return;
       }
 
-      // تعيين مالك البوت (منح جميع الصلاحيات)
       if (state.action === 'set_bot_owner') {
         const ownerId = parseInt(text);
         if (isNaN(ownerId)) {
@@ -1321,7 +1259,6 @@ bot.on('message', async (msg) => {
         return;
       }
 
-      // إضافة تاجر
       if (state.action === 'add_merchant') {
         if (state.step === 'nameEn') {
           await User.update({ state: JSON.stringify({ ...state, nameEn: text, step: 'nameAr' }) }, { where: { id: userId } });
@@ -1349,7 +1286,6 @@ bot.on('message', async (msg) => {
         }
       }
 
-      // تعديل السعر
       if (state.action === 'set_price') {
         const price = parseFloat(text);
         if (isNaN(price)) {
@@ -1363,7 +1299,6 @@ bot.on('message', async (msg) => {
         return;
       }
 
-      // إضافة أكواد
       if (state.action === 'add_codes') {
         const codes = text.split(/\s+/).filter(c => c.trim().length > 0);
         const merchantId = state.merchantId;
@@ -1375,7 +1310,6 @@ bot.on('message', async (msg) => {
         return;
       }
 
-      // تعديل تاجر
       if (state.action === 'edit_merchant') {
         const merchant = await Merchant.findByPk(state.merchantId);
         if (!merchant) {
@@ -1406,7 +1340,6 @@ bot.on('message', async (msg) => {
         }
       }
 
-      // تعديل التصنيف
       if (state.action === 'edit_category') {
         const merchant = await Merchant.findByPk(state.merchantId);
         if (merchant) {
@@ -1419,7 +1352,6 @@ bot.on('message', async (msg) => {
         return;
       }
 
-      // إضافة طريقة دفع
       if (state.action === 'add_payment_method') {
         if (state.step === 'nameEn') {
           await User.update({ state: JSON.stringify({ ...state, nameEn: text, step: 'nameAr' }) }, { where: { id: userId } });
@@ -1456,7 +1388,6 @@ bot.on('message', async (msg) => {
         }
       }
 
-      // تعيين حدود الإيداع
       if (state.action === 'set_limits') {
         if (state.step === 'min') {
           const min = parseFloat(text);
@@ -1488,7 +1419,6 @@ bot.on('message', async (msg) => {
         }
       }
 
-      // تعيين نسبة الإحالة
       if (state.action === 'set_referral_percent') {
         const percent = parseFloat(text);
         if (isNaN(percent)) {
@@ -1504,7 +1434,6 @@ bot.on('message', async (msg) => {
       }
     }
 
-    // معالجة الدعم
     if (state && state.action === 'support') {
       let supportText = text || '';
       let photoFileId = null;
@@ -1523,13 +1452,10 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // معالجة كود الخصم
     if (state && state.action === 'discount') {
       const discountCode = text.trim();
-      // نتحقق من صلاحية الكود
       const discount = await DiscountCode.findOne({ where: { code: discountCode } });
       if (discount && discount.validUntil > new Date() && discount.usedCount < discount.maxUses) {
-        // نحفظ الكود في حالة المستخدم
         await User.update({ state: JSON.stringify({ action: 'discount_applied', discountCode }) }, { where: { id: userId } });
         await bot.sendMessage(userId, await getText(userId, 'discountApplied', { percent: discount.discountPercent }));
         await sendMainMenu(userId);
@@ -1541,7 +1467,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // معالجة الشراء (إدخال الكمية)
     if (state && state.action === 'buy') {
       const qty = parseInt(text);
       if (isNaN(qty) || qty <= 0) {
@@ -1559,7 +1484,6 @@ bot.on('message', async (msg) => {
         await bot.sendMessage(userId, (await getText(userId, 'noCodes')) + ` Available: ${available}`);
         return;
       }
-      // التحقق من وجود كود خصم مطبق
       let discountCode = null;
       if (user.state && user.state.includes('discount_applied')) {
         const stateObj = JSON.parse(user.state);
@@ -1573,10 +1497,8 @@ bot.on('message', async (msg) => {
         }
         msg += `\n\n${result.codes}`;
         await bot.sendMessage(userId, msg);
-        // تحديث الإحالات
         const userObj = await User.findByPk(userId);
         if (userObj.referredBy) {
-          // مكافأة المُحيل (مثلاً 10% من قيمة الشراء)
           const rewardAmount = (merchant.price * qty) * (process.env.REFERRAL_PERCENT || 10) / 100;
           await BalanceTransaction.create({
             userId: userObj.referredBy,
@@ -1596,7 +1518,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // معالجة إدخال المبلغ للشحن
     if (state && state.action === 'deposit_amount') {
       const amount = parseFloat(text);
       if (isNaN(amount) || amount <= 0) {
@@ -1608,7 +1529,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // معالجة إرسال TXID أو صورة الدفع للشحن
     if (state && state.action === 'deposit_tx') {
       const { methodId, amount } = state;
       const method = await PaymentMethod.findByPk(methodId);
@@ -1641,7 +1561,6 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // معالجة الاسترداد (كود البطاقة)
     if (state && state.action === 'redeem') {
       const merchantId = state.merchantId;
       const cardCode = text.trim();
@@ -1692,13 +1611,22 @@ app.post('/api/code', async (req, res) => {
 });
 
 // ========================
-// 9. جدولة المهام (مثلاً تنظيف الأكواد منتهية الصلاحية)
+// 9. جدولة المهام باستخدام setInterval (بديل عن node-cron)
 // ========================
-cron.schedule('0 0 * * *', async () => { // كل يوم في منتصف الليل
-  const now = new Date();
-  await Code.update({ isUsed: true }, { where: { expiresAt: { [Sequelize.Op.lt]: now }, isUsed: false } });
-  console.log('Expired codes marked as used');
-});
+setInterval(async () => {
+  try {
+    const now = new Date();
+    const updated = await Code.update(
+      { isUsed: true },
+      { where: { expiresAt: { [Sequelize.Op.lt]: now }, isUsed: false } }
+    );
+    if (updated[0] > 0) {
+      console.log(`✅ Expired codes marked as used: ${updated[0]} codes`);
+    }
+  } catch (err) {
+    console.error('Error cleaning expired codes:', err);
+  }
+}, 24 * 60 * 60 * 1000); // كل 24 ساعة
 
 // ========================
 // 10. تشغيل الخادم ومزامنة قاعدة البيانات
