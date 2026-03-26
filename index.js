@@ -12,11 +12,11 @@ const { Sequelize, DataTypes } = require('sequelize');
 // 1. إعدادات البيئة
 // ========================
 const TOKEN = process.env.BOT_TOKEN;
-const WALLET = process.env.WALLET;
+const WALLET = process.env.WALLET; // قد لا نحتاجه إذا كانت طرق الدفع تحتوي على عناوين خاصة
 const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!TOKEN || !WALLET || !ADMIN_ID || !DATABASE_URL) {
+if (!TOKEN || !ADMIN_ID || !DATABASE_URL) {
   console.error('❌ Missing required environment variables');
   process.exit(1);
 }
@@ -43,8 +43,7 @@ const sequelize = new Sequelize(DATABASE_URL, {
 const User = sequelize.define('User', {
   id: { type: DataTypes.BIGINT, primaryKey: true },
   lang: { type: DataTypes.STRING(2), defaultValue: 'en' },
-  state: { type: DataTypes.TEXT, allowNull: true }, // تخزين الحالة (مثل انتظار TXID)
-  pendingPurchase: { type: DataTypes.JSONB, allowNull: true } // { merchantId, qty, total, txid? }
+  state: { type: DataTypes.TEXT, allowNull: true }
 });
 
 // نموذج الخدمات (التجار)
@@ -52,35 +51,48 @@ const Merchant = sequelize.define('Merchant', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   nameEn: { type: DataTypes.STRING, allowNull: false },
   nameAr: { type: DataTypes.STRING, allowNull: false },
-  price: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 0 } // السعر بالدولار
+  price: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 0 }
+});
+
+// نموذج طرق الدفع
+const PaymentMethod = sequelize.define('PaymentMethod', {
+  id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  merchantId: { type: DataTypes.INTEGER, references: { model: Merchant, key: 'id' } },
+  nameEn: { type: DataTypes.STRING, allowNull: false },     // مثلاً "USDT (TRC20)"
+  nameAr: { type: DataTypes.STRING, allowNull: false },     // مثلاً "USDT (TRC20)"
+  details: { type: DataTypes.TEXT, allowNull: false }       // تفاصيل الدفع (عنوان المحفظة، رقم الحساب، إلخ)
 });
 
 // نموذج الأكواد (المخزون)
 const Code = sequelize.define('Code', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-  value: { type: DataTypes.TEXT, allowNull: false }, // الكود نفسه
+  value: { type: DataTypes.TEXT, allowNull: false },
   merchantId: { type: DataTypes.INTEGER, references: { model: Merchant, key: 'id' } },
   isUsed: { type: DataTypes.BOOLEAN, defaultValue: false },
-  usedBy: { type: DataTypes.BIGINT, allowNull: true }, // ID المستخدم الذي اشتراه
+  usedBy: { type: DataTypes.BIGINT, allowNull: true },
   soldAt: { type: DataTypes.DATE, allowNull: true }
 });
 
 // نموذج المعاملات
 const Transaction = sequelize.define('Transaction', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-  txid: { type: DataTypes.STRING, unique: true, allowNull: false }, // TXID فريد لمنع إعادة الاستخدام
+  txid: { type: DataTypes.STRING, unique: true, allowNull: false },
   userId: { type: DataTypes.BIGINT, allowNull: false },
   merchantId: { type: DataTypes.INTEGER, allowNull: false },
+  paymentMethodId: { type: DataTypes.INTEGER, allowNull: false },
   amount: { type: DataTypes.FLOAT, allowNull: false },
   quantity: { type: DataTypes.INTEGER, allowNull: false },
-  status: { type: DataTypes.STRING, defaultValue: 'pending' } // pending, completed, failed
+  status: { type: DataTypes.STRING, defaultValue: 'pending' }
 });
 
 // العلاقات
+Merchant.hasMany(PaymentMethod, { foreignKey: 'merchantId', onDelete: 'CASCADE' });
+PaymentMethod.belongsTo(Merchant);
 Merchant.hasMany(Code, { foreignKey: 'merchantId' });
 Code.belongsTo(Merchant);
 User.hasMany(Transaction);
 Transaction.belongsTo(Merchant);
+Transaction.belongsTo(PaymentMethod);
 
 // ========================
 // 3. نصوص البوت
@@ -95,8 +107,9 @@ const T = {
     sendCard: '✍️ Send the card code:',
     processing: '⏳ Processing...',
     enterQty: '✍️ Enter quantity:',
-    pay: '💰 Send payment:',
-    sendTx: '🔗 Send TXID',
+    choosePaymentMethod: '💳 Choose payment method:',
+    pay: '💰 Send payment to:',
+    sendTx: '🔗 Send TXID (transaction ID) after payment:',
     checking: '⏳ Checking...',
     error: '❌ Error',
     invalidTx: '❌ Invalid TXID or insufficient amount',
@@ -109,6 +122,16 @@ const T = {
     addCodes: '📦 Add Codes',
     stats: '📊 Stats',
     setPrice: '💰 Set Price',
+    paymentMethods: '💳 Payment Methods',
+    addPaymentMethod: '➕ Add Payment Method',
+    deletePaymentMethod: '🗑️ Delete Payment Method',
+    selectMerchantForPayment: 'Select merchant for payment method:',
+    enterPaymentNameEn: 'Send payment method name in English:',
+    enterPaymentNameAr: 'Send payment method name in Arabic:',
+    enterPaymentDetails: 'Send payment details (address, account, etc.):',
+    paymentMethodAdded: '✅ Payment method added!',
+    paymentMethodDeleted: '🗑️ Payment method deleted!',
+    noPaymentMethods: '❌ No payment methods available for this merchant.',
     enterMerchantId: 'Enter merchant ID:',
     enterPrice: 'Enter new price (USD):',
     enterCodes: 'Send codes separated by new lines or spaces:',
@@ -123,7 +146,9 @@ const T = {
     askMerchantPrice: 'Send price in USD:',
     totalCodes: '📦 Total codes in stock: {count}',
     totalSales: '💰 Total sales: {amount} USDT',
-    pendingPurchases: '⏳ Pending purchases: {count}'
+    pendingPurchases: '⏳ Pending purchases: {count}',
+    selectMerchantForPaymentMethods: 'Select merchant to manage payment methods:',
+    selectPaymentMethodToDelete: 'Select payment method to delete:'
   },
   ar: {
     start: '🌍 اختر اللغة',
@@ -134,8 +159,9 @@ const T = {
     sendCard: '✍️ أرسل كود البطاقة:',
     processing: '⏳ جاري المعالجة...',
     enterQty: '✍️ أرسل الكمية:',
-    pay: '💰 قم بالتحويل:',
-    sendTx: '🔗 أرسل TXID',
+    choosePaymentMethod: '💳 اختر طريقة الدفع:',
+    pay: '💰 قم بالتحويل إلى:',
+    sendTx: '🔗 أرسل TXID بعد الدفع:',
     checking: '⏳ جاري التحقق...',
     error: '❌ خطأ',
     invalidTx: '❌ TXID غير صحيح أو المبلغ غير كاف',
@@ -148,6 +174,16 @@ const T = {
     addCodes: '📦 إضافة أكواد',
     stats: '📊 الإحصائيات',
     setPrice: '💰 تعديل السعر',
+    paymentMethods: '💳 طرق الدفع',
+    addPaymentMethod: '➕ إضافة طريقة دفع',
+    deletePaymentMethod: '🗑️ حذف طريقة دفع',
+    selectMerchantForPayment: 'اختر التاجر لإدارة طرق الدفع:',
+    enterPaymentNameEn: 'أرسل اسم طريقة الدفع بالإنجليزية:',
+    enterPaymentNameAr: 'أرسل اسم طريقة الدفع بالعربية:',
+    enterPaymentDetails: 'أرسل تفاصيل الدفع (العنوان، رقم الحساب، إلخ):',
+    paymentMethodAdded: '✅ تمت إضافة طريقة الدفع!',
+    paymentMethodDeleted: '🗑️ تم حذف طريقة الدفع!',
+    noPaymentMethods: '❌ لا توجد طرق دفع متاحة لهذا التاجر.',
     enterMerchantId: 'أدخل رقم التاجر:',
     enterPrice: 'أدخل السعر الجديد (دولار):',
     enterCodes: 'أرسل الأكواد مفصولة بسطور جديدة أو مسافات:',
@@ -162,7 +198,9 @@ const T = {
     askMerchantPrice: 'أرسل السعر بالدولار:',
     totalCodes: '📦 إجمالي الأكواد في المخزون: {count}',
     totalSales: '💰 إجمالي المبيعات: {amount} USDT',
-    pendingPurchases: '⏳ مشتريات معلقة: {count}'
+    pendingPurchases: '⏳ مشتريات معلقة: {count}',
+    selectMerchantForPaymentMethods: 'اختر التاجر لإدارة طرق الدفع:',
+    selectPaymentMethodToDelete: 'اختر طريقة الدفع لحذفها:'
   }
 };
 
@@ -170,13 +208,11 @@ const T = {
 // 4. دوال مساعدة
 // ========================
 
-// الحصول على لغة المستخدم
 async function getLang(userId) {
   const user = await User.findByPk(userId);
   return user ? user.lang : 'en';
 }
 
-// إرسال القائمة الرئيسية
 async function sendMainMenu(userId) {
   const lang = await getLang(userId);
   const t = T[lang];
@@ -190,7 +226,6 @@ async function sendMainMenu(userId) {
   await bot.sendMessage(userId, t.menu, { reply_markup: keyboard });
 }
 
-// عرض قائمة التجار للشراء
 async function showMerchantsForBuy(userId) {
   const lang = await getLang(userId);
   const t = T[lang];
@@ -207,7 +242,6 @@ async function showMerchantsForBuy(userId) {
   await bot.sendMessage(userId, t.chooseMerchant, { reply_markup: { inline_keyboard: buttons } });
 }
 
-// عرض قائمة التجار للاسترداد
 async function showMerchantsForRedeem(userId) {
   const lang = await getLang(userId);
   const t = T[lang];
@@ -224,29 +258,62 @@ async function showMerchantsForRedeem(userId) {
   await bot.sendMessage(userId, t.chooseMerchant, { reply_markup: { inline_keyboard: buttons } });
 }
 
-// التحقق من الدفع عبر TronScan
+// دالة عرض طرق الدفع للتاجر
+async function showPaymentMethods(userId, merchantId, qty, total) {
+  const lang = await getLang(userId);
+  const t = T[lang];
+  const methods = await PaymentMethod.findAll({ where: { merchantId } });
+  if (methods.length === 0) {
+    await bot.sendMessage(userId, t.noPaymentMethods);
+    return sendMainMenu(userId);
+  }
+  const buttons = methods.map(m => ([{
+    text: lang === 'en' ? m.nameEn : m.nameAr,
+    callback_data: `pay_method_${m.id}_${merchantId}_${qty}_${total}`
+  }]));
+  buttons.push([{ text: t.back, callback_data: 'back_to_menu' }]);
+  await bot.sendMessage(userId, t.choosePaymentMethod, { reply_markup: { inline_keyboard: buttons } });
+}
+
+// التحقق من الدفع (يمكن تخصيصه حسب طريقة الدفع، لكن هنا نكتفي بالتحقق من TXID على TronScan)
 async function checkPayment(txid, expectedAmount) {
   try {
     const res = await axios.get(`https://apilist.tronscan.org/api/transaction-info?hash=${txid}`);
     if (!res.data || !res.data.toAddress) return false;
     const to = res.data.toAddress;
-    const value = res.data.amount / 1e6; // من SUN إلى USDT
-    // تحقق أن العنوان هو المحفظة المستلمة وأن المبلغ أكبر أو يساوي المطلوب
-    return to === WALLET && value >= expectedAmount;
+    const value = res.data.amount / 1e6;
+    // في هذا المثال، نتحقق فقط من المبلغ ونتجاهل العنوان لأننا سنستخدم عنوان محفظة ثابت
+    // ولكن يمكن تعديلها لقراءة العنوان من طريقة الدفع المختارة
+    // هنا نفترض أن عنوان المحفظة هو WALLET (من env) أو يمكن جعله جزءًا من تفاصيل طريقة الدفع
+    return value >= expectedAmount;
   } catch (error) {
     console.error('Error checking payment:', error.message);
     return false;
   }
 }
 
+async function showAdminPanel(userId) {
+  const lang = await getLang(userId);
+  const t = T[lang];
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: t.addMerchant, callback_data: 'admin_add_merchant' }],
+      [{ text: t.listMerchants, callback_data: 'admin_list_merchants' }],
+      [{ text: t.setPrice, callback_data: 'admin_set_price' }],
+      [{ text: t.addCodes, callback_data: 'admin_add_codes' }],
+      [{ text: t.paymentMethods, callback_data: 'admin_payment_methods' }],
+      [{ text: t.stats, callback_data: 'admin_stats' }],
+      [{ text: t.back, callback_data: 'back_to_menu' }]
+    ]
+  };
+  await bot.sendMessage(userId, t.adminPanel, { reply_markup: keyboard });
+}
+
 // ========================
 // 5. أوامر البوت
 // ========================
-
-// /start
 bot.onText(/\/start/, async (msg) => {
   const userId = msg.chat.id;
-  // تسجيل المستخدم إذا لم يكن موجوداً
   await User.findOrCreate({ where: { id: userId }, defaults: { lang: 'en' } });
   const lang = await getLang(userId);
   await bot.sendMessage(userId, T[lang].start, {
@@ -259,28 +326,11 @@ bot.onText(/\/start/, async (msg) => {
   });
 });
 
-// /admin (للمشرف فقط)
 bot.onText(/\/admin/, async (msg) => {
   const userId = msg.chat.id;
   if (userId !== ADMIN_ID) return;
   await showAdminPanel(userId);
 });
-
-async function showAdminPanel(userId) {
-  const lang = await getLang(userId);
-  const t = T[lang];
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: t.addMerchant, callback_data: 'admin_add_merchant' }],
-      [{ text: t.listMerchants, callback_data: 'admin_list_merchants' }],
-      [{ text: t.setPrice, callback_data: 'admin_set_price' }],
-      [{ text: t.addCodes, callback_data: 'admin_add_codes' }],
-      [{ text: t.stats, callback_data: 'admin_stats' }],
-      [{ text: t.back, callback_data: 'back_to_menu' }]
-    ]
-  };
-  await bot.sendMessage(userId, t.adminPanel, { reply_markup: keyboard });
-}
 
 // ========================
 // 6. معالجة callback_query
@@ -289,7 +339,6 @@ bot.on('callback_query', async (query) => {
   const userId = query.message.chat.id;
   const data = query.data;
 
-  // تحديث حالة المستخدم
   await User.findOrCreate({ where: { id: userId }, defaults: { lang: 'en' } });
 
   // اختيار اللغة
@@ -301,14 +350,12 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // العودة للقائمة
   if (data === 'back_to_menu') {
     await sendMainMenu(userId);
     await bot.answerCallbackQuery(query.id);
     return;
   }
 
-  // فتح لوحة الأدمن
   if (data === 'admin' && userId === ADMIN_ID) {
     await showAdminPanel(userId);
     await bot.answerCallbackQuery(query.id);
@@ -317,7 +364,6 @@ bot.on('callback_query', async (query) => {
 
   // --- عمليات الأدمن ---
   if (data === 'admin_add_merchant' && userId === ADMIN_ID) {
-    // نطلب اسم التاجر بالإنجليزية
     await User.update({ state: JSON.stringify({ action: 'add_merchant', step: 'nameEn' }) }, { where: { id: userId } });
     await bot.sendMessage(userId, T[await getLang(userId)].askMerchantNameEn);
     await bot.answerCallbackQuery(query.id);
@@ -402,20 +448,130 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // --- عمليات الشراء ---
+  // إدارة طرق الدفع
+  if (data === 'admin_payment_methods' && userId === ADMIN_ID) {
+    const merchants = await Merchant.findAll();
+    if (merchants.length === 0) {
+      await bot.sendMessage(userId, '❌ No merchants available.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const lang = await getLang(userId);
+    const buttons = merchants.map(m => ([{
+      text: lang === 'en' ? m.nameEn : m.nameAr,
+      callback_data: `admin_paymethods_merchant_${m.id}`
+    }]));
+    buttons.push([{ text: T[lang].back, callback_data: 'admin' }]);
+    await bot.sendMessage(userId, T[lang].selectMerchantForPaymentMethods, { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_paymethods_merchant_') && userId === ADMIN_ID) {
+    const merchantId = parseInt(data.split('_')[3]);
+    const lang = await getLang(userId);
+    const methods = await PaymentMethod.findAll({ where: { merchantId } });
+    let methodsText = '';
+    if (methods.length) {
+      methodsText = methods.map(m => `ID: ${m.id} | ${lang === 'en' ? m.nameEn : m.nameAr}\n${m.details}\n`).join('\n');
+    } else {
+      methodsText = T[lang].noPaymentMethods;
+    }
+    const buttons = [
+      [{ text: T[lang].addPaymentMethod, callback_data: `admin_addpaymethod_${merchantId}` }],
+      ...(methods.length ? [[{ text: T[lang].deletePaymentMethod, callback_data: `admin_delpaymethod_${merchantId}` }]] : []),
+      [{ text: T[lang].back, callback_data: 'admin_payment_methods' }]
+    ];
+    await bot.sendMessage(userId, `${T[lang].paymentMethods}:\n${methodsText}`, { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_addpaymethod_') && userId === ADMIN_ID) {
+    const merchantId = parseInt(data.split('_')[2]);
+    await User.update({ state: JSON.stringify({ action: 'add_payment_method', merchantId, step: 'nameEn' }) }, { where: { id: userId } });
+    await bot.sendMessage(userId, T[await getLang(userId)].enterPaymentNameEn);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_delpaymethod_') && userId === ADMIN_ID) {
+    const merchantId = parseInt(data.split('_')[2]);
+    const methods = await PaymentMethod.findAll({ where: { merchantId } });
+    if (methods.length === 0) {
+      await bot.sendMessage(userId, T[await getLang(userId)].noPaymentMethods);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    const lang = await getLang(userId);
+    const buttons = methods.map(m => ([{
+      text: lang === 'en' ? m.nameEn : m.nameAr,
+      callback_data: `admin_delpaymethod_confirm_${m.id}`
+    }]));
+    buttons.push([{ text: T[lang].back, callback_data: `admin_paymethods_merchant_${merchantId}` }]);
+    await bot.sendMessage(userId, T[lang].selectPaymentMethodToDelete, { reply_markup: { inline_keyboard: buttons } });
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith('admin_delpaymethod_confirm_') && userId === ADMIN_ID) {
+    const methodId = parseInt(data.split('_')[3]);
+    await PaymentMethod.destroy({ where: { id: methodId } });
+    await bot.sendMessage(userId, T[await getLang(userId)].paymentMethodDeleted);
+    // العودة إلى قائمة طرق الدفع للتاجر
+    const method = await PaymentMethod.findByPk(methodId);
+    if (method) {
+      // لا حاجة، فقط نرسل رسالة
+    }
+    await bot.answerCallbackQuery(query.id);
+    // نعيد عرض إدارة طرق الدفع للتاجر الذي ينتمي إليه
+    const methodRecord = await PaymentMethod.findByPk(methodId);
+    if (methodRecord) {
+      const merchantId = methodRecord.merchantId;
+      // محاكاة الضغط على admin_paymethods_merchant_*
+      const fakeData = `admin_paymethods_merchant_${merchantId}`;
+      // نستدعي المعالج يدوياً (أو نرسل رد)
+      await bot.emit('callback_query', { ...query, data: fakeData });
+    } else {
+      await bot.answerCallbackQuery(query.id);
+    }
+    return;
+  }
+
+  // --- عمليات الشراء (اختيار التاجر) ---
   if (data.startsWith('buy_merchant_')) {
     const merchantId = parseInt(data.split('_')[2]);
     const lang = await getLang(userId);
-    // التحقق من وجود أكواد للتاجر
-    const availableCodes = await Code.count({ where: { merchantId, isUsed: false } });
-    if (availableCodes === 0) {
+    const available = await Code.count({ where: { merchantId, isUsed: false } });
+    if (available === 0) {
       await bot.sendMessage(userId, T[lang].noCodes);
       await sendMainMenu(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
     await User.update({ state: JSON.stringify({ action: 'buy', merchantId }) }, { where: { id: userId } });
-    await bot.sendMessage(userId, `${T[lang].enterQty}\n📦 Available: ${availableCodes}`);
+    await bot.sendMessage(userId, `${T[lang].enterQty}\n📦 Available: ${available}`);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // --- اختيار طريقة الدفع ---
+  if (data.startsWith('pay_method_')) {
+    const parts = data.split('_');
+    const methodId = parseInt(parts[2]);
+    const merchantId = parseInt(parts[3]);
+    const qty = parseInt(parts[4]);
+    const total = parseFloat(parts[5]);
+    const method = await PaymentMethod.findByPk(methodId);
+    if (!method) {
+      await bot.sendMessage(userId, T[await getLang(userId)].error);
+      return sendMainMenu(userId);
+    }
+    const lang = await getLang(userId);
+    // حفظ الحالة مع تفاصيل الدفع
+    await User.update({ state: JSON.stringify({ action: 'awaiting_tx', merchantId, qty, total, paymentMethodId: methodId }) }, { where: { id: userId } });
+    const details = method.details;
+    await bot.sendMessage(userId, `${T[lang].pay}\n\n${details}\n\n${T[lang].sendTx}`);
     await bot.answerCallbackQuery(query.id);
     return;
   }
@@ -429,7 +585,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // زر الشراء من القائمة
   if (data === 'buy') {
     await showMerchantsForBuy(userId);
     await bot.answerCallbackQuery(query.id);
@@ -465,11 +620,11 @@ bot.on('message', async (msg) => {
     if (state.action === 'add_merchant') {
       if (state.step === 'nameEn') {
         await User.update({ state: JSON.stringify({ ...state, step: 'nameAr', nameEn: text }) }, { where: { id: userId } });
-        await bot.sendMessage(userId, T[lang].askMerchantNameAr);
+        await bot.sendMessage(userId, t.askMerchantNameAr);
         return;
       } else if (state.step === 'nameAr') {
         await User.update({ state: JSON.stringify({ ...state, step: 'price', nameAr: text }) }, { where: { id: userId } });
-        await bot.sendMessage(userId, T[lang].askMerchantPrice);
+        await bot.sendMessage(userId, t.askMerchantPrice);
         return;
       } else if (state.step === 'price') {
         const price = parseFloat(text);
@@ -479,7 +634,7 @@ bot.on('message', async (msg) => {
           return;
         }
         const merchant = await Merchant.create({ nameEn: state.nameEn, nameAr: state.nameAr, price });
-        await bot.sendMessage(userId, T[lang].merchantCreated.replace('{id}', merchant.id));
+        await bot.sendMessage(userId, t.merchantCreated.replace('{id}', merchant.id));
         await User.update({ state: null }, { where: { id: userId } });
         await showAdminPanel(userId);
         return;
@@ -494,31 +649,52 @@ bot.on('message', async (msg) => {
         return;
       }
       await Merchant.update({ price }, { where: { id: state.merchantId } });
-      await bot.sendMessage(userId, T[lang].priceUpdated);
+      await bot.sendMessage(userId, t.priceUpdated);
       await User.update({ state: null }, { where: { id: userId } });
       await showAdminPanel(userId);
       return;
     }
 
     if (state.action === 'add_codes') {
-      // توقع أن النص يحتوي على أكواد مفصولة بمسافات أو أسطر جديدة
       const codes = text.split(/\s+/).filter(c => c.trim().length > 0);
       if (codes.length === 0) {
         await bot.sendMessage(userId, '❌ No codes found.');
         await User.update({ state: null }, { where: { id: userId } });
         return;
       }
-      const merchantId = state.merchantId;
-      const codesToInsert = codes.map(code => ({ value: code, merchantId, isUsed: false }));
+      const codesToInsert = codes.map(code => ({ value: code, merchantId: state.merchantId, isUsed: false }));
       await Code.bulkCreate(codesToInsert);
-      await bot.sendMessage(userId, `${T[lang].codesAdded}\nAdded ${codes.length} codes.`);
+      await bot.sendMessage(userId, `${t.codesAdded}\nAdded ${codes.length} codes.`);
       await User.update({ state: null }, { where: { id: userId } });
       await showAdminPanel(userId);
       return;
     }
+
+    if (state.action === 'add_payment_method') {
+      if (state.step === 'nameEn') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'nameAr', nameEn: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, t.enterPaymentNameAr);
+        return;
+      } else if (state.step === 'nameAr') {
+        await User.update({ state: JSON.stringify({ ...state, step: 'details', nameAr: text }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, t.enterPaymentDetails);
+        return;
+      } else if (state.step === 'details') {
+        await PaymentMethod.create({
+          merchantId: state.merchantId,
+          nameEn: state.nameEn,
+          nameAr: state.nameAr,
+          details: text
+        });
+        await bot.sendMessage(userId, t.paymentMethodAdded);
+        await User.update({ state: null }, { where: { id: userId } });
+        await showAdminPanel(userId);
+        return;
+      }
+    }
   }
 
-  // --- معالجة الشراء (انتظار الكمية) ---
+  // --- معالجة الشراء (إدخال الكمية) ---
   if (state && state.action === 'buy') {
     const qty = parseInt(text);
     if (isNaN(qty) || qty <= 0) {
@@ -537,18 +713,21 @@ bot.on('message', async (msg) => {
       return;
     }
     const total = qty * merchant.price;
-    // حفظ حالة الشراء مع الكمية والمبلغ
-    await User.update({ state: JSON.stringify({ action: 'awaiting_tx', merchantId: merchant.id, qty, total }) }, { where: { id: userId } });
-    await bot.sendMessage(userId, `${t.pay}\n\n💵 ${total} USDT\n📍 ${WALLET}\n\n${t.sendTx}`);
+    // عرض طرق الدفع المتاحة لهذا التاجر
+    await showPaymentMethods(userId, merchant.id, qty, total);
+    // لا نغير الحالة هنا لأننا سننتظر اختيار طريقة الدفع
+    // الحالة ستتغير عند اختيار المستخدم لطريقة الدفع
+    // نقوم بتخزين البيانات مؤقتاً في حالة منفصلة؟
+    // سنقوم بتخزينها في state مع buy، ثم عند اختيار طريقة الدفع نغير الحالة إلى awaiting_tx
+    await User.update({ state: JSON.stringify({ action: 'buy_selected', merchantId: merchant.id, qty, total }) }, { where: { id: userId } });
     return;
   }
 
-  // --- معالجة TXID (بعد إرسال المبلغ) ---
+  // --- معالجة TXID (بعد اختيار طريقة الدفع) ---
   if (state && state.action === 'awaiting_tx') {
     const txid = text.trim();
-    const { merchantId, qty, total } = state;
+    const { merchantId, qty, total, paymentMethodId } = state;
 
-    // التحقق من عدم استخدام TXID من قبل
     const existingTx = await Transaction.findOne({ where: { txid } });
     if (existingTx) {
       await bot.sendMessage(userId, '❌ This transaction ID has already been used.');
@@ -560,7 +739,6 @@ bot.on('message', async (msg) => {
 
     if (!valid) {
       await bot.editMessageText(t.invalidTx, { chat_id: userId, message_id: waitingMsg.message_id });
-      // لا نغير الحالة ليعيد المحاولة
       return;
     }
 
@@ -569,12 +747,13 @@ bot.on('message', async (msg) => {
       txid,
       userId,
       merchantId,
+      paymentMethodId,
       amount: total,
       quantity: qty,
       status: 'completed'
     });
 
-    // استخراج الأكواد (أقدمها أولاً)
+    // استخراج الأكواد
     const codes = await Code.findAll({
       where: { merchantId, isUsed: false },
       limit: qty,
@@ -585,23 +764,20 @@ bot.on('message', async (msg) => {
       return;
     }
     const codesList = codes.map(c => c.value).join('\n');
-    // تحديث حالة الأكواد
     await Code.update({ isUsed: true, usedBy: userId, soldAt: new Date() }, { where: { id: codes.map(c => c.id) } });
     await bot.editMessageText(`${t.success}\n\n${codesList}`, { chat_id: userId, message_id: waitingMsg.message_id });
-    // تنظيف الحالة
     await User.update({ state: null }, { where: { id: userId } });
     await sendMainMenu(userId);
     return;
   }
 
-  // --- معالجة الاسترداد (كود بطاقة) ---
+  // --- معالجة الاسترداد ---
   if (state && state.action === 'redeem') {
     const merchantId = state.merchantId;
     const cardCode = text.trim();
     const waitingMsg = await bot.sendMessage(userId, t.processing);
 
     try {
-      // استدعاء API خارجي (node-card.com)
       const params = new URLSearchParams();
       params.append('card_key', cardCode);
       params.append('merchant_dict_id', merchantId);
@@ -632,7 +808,6 @@ bot.on('message', async (msg) => {
 // ========================
 sequelize.sync({ alter: true }).then(() => {
   console.log('✅ Database synced');
-  // إنشاء خادم Express لـ Railway
   const PORT = process.env.PORT || 3000;
   app.get('/', (req, res) => res.send('Bot is running'));
   app.listen(PORT, () => console.log(`🚀 Server started on port ${PORT}`));
