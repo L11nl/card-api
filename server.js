@@ -40,14 +40,7 @@ const T = {
     pay: "💰 Send payment:",
     sendTx: "🔗 Send TXID",
     checking: "⏳ Checking...",
-    error: "❌ Error",
-    adminMenu: "👑 Admin Menu: Manage inventory, check payments, send notifications",
-    addItem: "➕ Add item to inventory",
-    viewItems: "📦 View inventory",
-    activateBot: "⚙️ Activate bot",
-    deactivateBot: "⚙️ Deactivate bot",
-    sendNotification: "📣 Send Notification",
-    enterPrice: "💰 Enter the price for the item"
+    error: "❌ Error"
   },
   ar: {
     start: "🌍 اختر اللغة",
@@ -61,14 +54,7 @@ const T = {
     pay: "💰 قم بالتحويل:",
     sendTx: "🔗 ارسل TXID",
     checking: "⏳ جاري التحقق...",
-    error: "❌ خطأ",
-    adminMenu: "👑 قائمة الأدمن: إدارة المخزون، التحقق من المدفوعات، إرسال الإشعارات",
-    addItem: "➕ إضافة عنصر للمخزون",
-    viewItems: "📦 عرض المخزون",
-    activateBot: "⚙️ تفعيل البوت",
-    deactivateBot: "⚙️ إيقاف البوت",
-    sendNotification: "📣 إرسال إشعار",
-    enterPrice: "💰 أدخل سعر العنصر"
+    error: "❌ خطأ"
   }
 };
 
@@ -118,22 +104,6 @@ function showMerchants(id) {
   });
 }
 
-// ===== عرض العناصر في المخزون =====
-function viewInventory(id) {
-  const lang = userLang[id];
-  const t = T[lang];
-  if (codes.length === 0) {
-    return bot.sendMessage(id, "❌ No items available in inventory.");
-  }
-
-  let inventoryText = "📦 Inventory:\n";
-  codes.forEach((item, index) => {
-    inventoryText += `${index + 1}. ${item.code} - $${item.price}\n`;
-  });
-
-  bot.sendMessage(id, inventoryText);
-}
-
 // ===== BUTTONS =====
 bot.on("callback_query", async (q) => {
   const id = q.message.chat.id;
@@ -152,17 +122,10 @@ bot.on("callback_query", async (q) => {
 
   // 🛒 شراء
   if (data === "buy") {
-    return bot.sendMessage(id, `${T[userLang[id]].enterQty}\n📦 Stock: ${codes.length}`);
-  }
-
-  // إذا كان المستخدم هو الأدمن
-  if (data === "admin_menu" && id === 643309456) {
-    return showAdminMenu(id);
-  }
-
-  // عرض المخزون
-  if (data === "view_inventory") {
-    return viewInventory(id);
+    const lang = userLang[id];
+    return bot.sendMessage(id,
+      `${T[lang].enterQty}\n📦 Stock: ${codes.length}`
+    );
   }
 
   // اختيار التاجر
@@ -175,98 +138,36 @@ bot.on("callback_query", async (q) => {
   }
 });
 
-// ===== إدارة المخزون وميزات الأدمن =====
-function showAdminMenu(id) {
+// ===== تحقق الدفع =====
+async function checkPayment(txid, amount) {
+  try {
+    const res = await axios.get(`https://apilist.tronscan.org/api/transaction-info?hash=${txid}`);
+
+    if (!res.data) return false;
+
+    const to = res.data.toAddress;
+    const value = res.data.amount / 1e6;
+
+    return to === WALLET && value >= amount;
+  } catch {
+    return false;
+  }
+}
+
+// ===== MESSAGE =====
+bot.on("message", async (msg) => {
+  const id = msg.chat.id;
+  const text = msg.text;
+
+  if (!text || text.startsWith("/")) return;
+
   const lang = userLang[id];
   const t = T[lang];
 
-  bot.sendMessage(id, t.adminMenu, {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: t.addItem, callback_data: "add_item" }],
-        [{ text: t.viewItems, callback_data: "view_inventory" }],
-        [{ text: t.activateBot, callback_data: "activate_bot" }],
-        [{ text: t.deactivateBot, callback_data: "deactivate_bot" }],
-        [{ text: t.sendNotification, callback_data: "send_notification" }]
-      ]
-    }
-  });
-}
-
-bot.on("callback_query", async (q) => {
-  const id = q.message.chat.id;
-  const data = q.data;
-
-  if (data === "add_item") {
-    userState[id] = "adding_item"; // تعيين حالة الأدمن لإضافة عنصر
-    return bot.sendMessage(id, T[userLang[id]].enterPrice);
-  }
-
-  if (data === "view_inventory") {
-    return viewInventory(id);
-  }
-
-  if (data === "activate_bot") {
-    botActive = true;
-    return bot.sendMessage(id, "✅ Bot activated");
-  }
-
-  if (data === "deactivate_bot") {
-    botActive = false;
-    return bot.sendMessage(id, "❌ Bot deactivated");
-  }
-
-  if (data === "send_notification") {
-    return bot.sendMessage(id, "🔊 Please send the notification text.");
-  }
-});
-
-// ===== إضافة عناصر إلى المخزون =====
-bot.on("message", async (msg) => {
-  const id = msg.chat.id;
-  const text = msg.text;
-
-  if (text === "/admin" && id === 643309456) {
-    return showAdminMenu(id);
-  }
-
-  if (id === 643309456 && userState[id] === "adding_item") {
-    const code = text; // العنصر المدخل من قبل الأدمن
-    userState[id] = "setting_price"; // الانتقال لإعداد السعر
-
-    return bot.sendMessage(id, T[userLang[id]].enterPrice);
-  }
-
-  if (id === 643309456 && userState[id] === "setting_price") {
-    const price = parseFloat(text);
-    if (isNaN(price)) {
-      return bot.sendMessage(id, "❌ Invalid price. Please enter a valid number.");
-    }
-
-    // إضافة العنصر إلى المخزون
-    codes.push({ code: text, price: price });
-
-    userState[id] = null; // إعادة تعيين حالة الأدمن
-
-    return bot.sendMessage(id, `✅ Item added to inventory: ${text} with price $${price}`);
-  }
-
-  if (id === 643309456 && text.startsWith("send_notification")) {
-    const notificationText = text.split(" ").slice(1).join(" ");
-    users.forEach(userId => {
-      bot.sendMessage(userId, notificationText);
-    });
-    return bot.sendMessage(id, "📣 Notification sent to all users");
-  }
-});
-
-// ===== PAYMENT =====
-bot.on("message", async (msg) => {
-  const id = msg.chat.id;
-  const text = msg.text;
-
-  if (text && !isNaN(text)) {
+  // 🛒 شراء كودات
+  if (!isNaN(text) && codes.length > 0) {
     const qty = parseInt(text);
+
     if (qty > codes.length) {
       return bot.sendMessage(id, `❌ Only ${codes.length} available`);
     }
@@ -274,24 +175,33 @@ bot.on("message", async (msg) => {
     const total = qty * PRICE;
     pendingBuy[id] = { qty, total };
 
-    return bot.sendMessage(id, `${T[userLang[id]].pay}\n💵 ${total} USDT\n📍 Pay to wallet: ${WALLET}\n${T[userLang[id]].sendTx}`);
+    return bot.sendMessage(id,
+`${t.pay}
+
+💵 ${total} USDT
+📍 ${WALLET}
+
+${t.sendTx}`
+    );
   }
 
+  // 🔗 TXID
   if (pendingBuy[id] && text.length > 20) {
-    const wait = await bot.sendMessage(id, T[userLang[id]].checking);
+    const wait = await bot.sendMessage(id, t.checking);
 
     const ok = await checkPayment(text, pendingBuy[id].total);
 
     if (!ok) {
-      return bot.editMessageText(T[userLang[id]].error, {
+      return bot.editMessageText(t.error, {
         chat_id: id,
         message_id: wait.message_id
       });
     }
 
     let result = "";
+
     for (let i = 0; i < pendingBuy[id].qty; i++) {
-      result += codes.pop().code + "\n";
+      result += codes.pop() + "\n";
     }
 
     pendingBuy[id] = null;
@@ -301,21 +211,57 @@ bot.on("message", async (msg) => {
       message_id: wait.message_id
     });
   }
-});
 
-// ===== CHECK PAYMENT =====
-async function checkPayment(txid, amount) {
-  try {
-    const res = await axios.get(`https://apilist.tronscan.org/api/transaction-info?hash=${txid}`);
-    if (!res.data) return false;
-    const to = res.data.toAddress;
-    const value = res.data.amount / 1e6;
-    return to === WALLET && value >= amount;
-  } catch {
-    return false;
+  // 🔄 استرداد API
+  if (userState[id]?.redeem) {
+    const wait = await bot.sendMessage(id, t.processing);
+
+    const params = new URLSearchParams();
+    params.append("card_key", text);
+    params.append("merchant_dict_id", userState[id].redeem);
+    params.append("platform_id", "1");
+
+    try {
+      const res = await axios.post(
+        "https://api.node-card.com/api/open/card/redeem",
+        params,
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+
+      await bot.deleteMessage(id, wait.message_id);
+
+      if (res.data.code !== 1) {
+        return bot.sendMessage(id, "❌ " + res.data.msg);
+      }
+
+      const c = res.data.data;
+
+      bot.sendMessage(id,
+`💳 CARD
+
+${c.card_number}
+CVV: ${c.cvv}
+EXP: ${c.exp}
+
+💰 ${c.available_amount}
+🏪 ${c.merchant_name}`
+      );
+
+    } catch {
+      bot.sendMessage(id, t.error);
+    }
   }
-}
+
+  // 👑 ADMIN
+  if (id == 643309456 && text.startsWith("add_code")) {
+    const code = text.split(" ")[1];
+    codes.push(code);
+
+    bot.sendMessage(id, "✅ Code added");
+  }
+});
 
 // ===== SERVER =====
 app.get("/", (req, res) => res.send("🔥 BOT RUNNING"));
+
 app.listen(3000, () => console.log("🚀 Started"));
