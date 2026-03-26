@@ -1,5 +1,5 @@
 // ========================
-// index.js - البوت المتكامل مع جميع الميزات
+// index.js - البوت المتكامل (مُصلح بالكامل)
 // ========================
 require('dotenv').config();
 const express = require('express');
@@ -24,7 +24,7 @@ const app = express();
 app.use(express.json());
 
 // ========================
-// 2. قاعدة البيانات (Sequelize)
+// 2. قاعدة البيانات
 // ========================
 const sequelize = new Sequelize(DATABASE_URL, {
   dialect: 'postgres',
@@ -70,7 +70,7 @@ const PaymentMethod = sequelize.define('PaymentMethod', {
   nameEn: { type: DataTypes.STRING, allowNull: false },
   nameAr: { type: DataTypes.STRING, allowNull: false },
   details: { type: DataTypes.TEXT, allowNull: false },
-  type: { type: DataTypes.STRING, defaultValue: 'manual' }, // 'auto' or 'manual'
+  type: { type: DataTypes.STRING, defaultValue: 'manual' },
   apiKeyId: { type: DataTypes.INTEGER, references: { model: ApiKey, key: 'id' }, allowNull: true }
 });
 
@@ -333,7 +333,7 @@ const DEFAULT_TEXTS = {
   }
 };
 
-// دوال النصوص الديناميكية
+// دوال مساعدة للنصوص
 async function getText(userId, key, replacements = {}) {
   const user = await User.findByPk(userId);
   const lang = user ? user.lang : 'en';
@@ -364,6 +364,7 @@ async function isAdmin(userId, requireSuper = false) {
   return true;
 }
 
+// دوال عرض القوائم
 async function sendMainMenu(userId) {
   const menuText = await getText(userId, 'menu');
   const keyboard = {
@@ -441,7 +442,6 @@ async function checkAutoPayment(txid, expectedAmount) {
   }
 }
 
-// دوال عرض القوائم
 async function showMerchantsForBuy(userId) {
   const merchants = await Merchant.findAll({ order: [['id', 'ASC']] });
   if (merchants.length === 0) {
@@ -550,9 +550,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // إدارة المدراء (super admin only)
-  // ========================
+  // ======================== إدارة المدراء ========================
   if (data === 'admin_manage_admins' && (await isAdmin(userId, true))) {
     const t = (key) => getText(userId, key);
     const keyboard = {
@@ -614,9 +612,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // إدارة النصوص
-  // ========================
+  // ======================== إدارة النصوص ========================
   if (data === 'admin_manage_texts' && (await isAdmin(userId))) {
     const keys = Object.keys(DEFAULT_TEXTS.en);
     const buttons = keys.slice(0, 20).map(k => ([{ text: k, callback_data: `admin_edit_text_${k}` }]));
@@ -634,9 +630,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // إدارة APIs
-  // ========================
+  // ======================== إدارة APIs ========================
   if (data === 'admin_manage_apis' && (await isAdmin(userId))) {
     const t = (key) => getText(userId, key);
     const keyboard = {
@@ -693,9 +687,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // إدارة البوتات
-  // ========================
+  // ======================== إدارة البوتات ========================
   if (data === 'admin_manage_bots' && (await isAdmin(userId))) {
     const t = (key) => getText(userId, key);
     const keyboard = {
@@ -768,9 +760,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // الإعدادات العامة
-  // ========================
+  // ======================== الإعدادات العامة ========================
   if (data === 'admin_general_settings' && (await isAdmin(userId))) {
     const t = (key) => getText(userId, key);
     const keyboard = {
@@ -799,9 +789,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // إدارة التجار
-  // ========================
+  // ======================== إدارة التجار ========================
   if (data === 'admin_add_merchant' && (await isAdmin(userId))) {
     await User.update({ state: JSON.stringify({ action: 'add_merchant', step: 'nameEn' }) }, { where: { id: userId } });
     await bot.sendMessage(userId, await getText(userId, 'askMerchantNameEn'));
@@ -897,9 +885,14 @@ bot.on('callback_query', async (query) => {
   if (data.startsWith('admin_paymethods_merchant_') && (await isAdmin(userId))) {
     const merchantId = parseInt(data.split('_')[3]);
     const methods = await PaymentMethod.findAll({ where: { merchantId } });
+    const lang = (await User.findByPk(userId)).lang;
     let methodsText = '';
     if (methods.length) {
-      methodsText = methods.map(m => `ID: ${m.id} | ${(await User.findByPk(userId)).lang === 'en' ? m.nameEn : m.nameAr}\n${m.details}\n`).join('\n');
+      // استخدام Promise.all لتجنب الأخطاء
+      const methodLines = await Promise.all(methods.map(async (m) => {
+        return `ID: ${m.id} | ${lang === 'en' ? m.nameEn : m.nameAr}\n${m.details}\n`;
+      }));
+      methodsText = methodLines.join('');
     } else {
       methodsText = await getText(userId, 'noPaymentMethods');
     }
@@ -958,9 +951,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // عمليات المستخدم (شراء واسترداد)
-  // ========================
+  // ======================== عمليات المستخدم ========================
   if (data === 'buy') {
     await showMerchantsForBuy(userId);
     await bot.answerCallbackQuery(query.id);
@@ -1017,9 +1008,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ========================
-  // معالجة موافقة/رفض طلبات الدفع اليدوي (خاص بالأدمن)
-  // ========================
+  // ======================== موافقة/رفض طلبات الدفع اليدوي ========================
   if (data.startsWith('approve_payment_')) {
     if (!(await isAdmin(userId))) {
       await bot.answerCallbackQuery(query.id, { text: 'Unauthorized', show_alert: true });
@@ -1033,7 +1022,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // استخراج الأكواد
     const codes = await Code.findAll({
       where: { merchantId: request.merchantId, isUsed: false },
       limit: request.quantity,
@@ -1047,15 +1035,12 @@ bot.on('callback_query', async (query) => {
     const codesList = codes.map(c => c.value).join('\n');
     await Code.update({ isUsed: true, usedBy: request.userId, soldAt: new Date() }, { where: { id: codes.map(c => c.id) } });
 
-    // تحديث حالة الطلب
     request.status = 'approved';
     await request.save();
 
-    // إرسال الأكواد للمستخدم
     const userMsg = await getText(request.userId, 'paymentApproved');
     await bot.sendMessage(request.userId, `${userMsg}\n\n${codesList}`);
 
-    // تحديث رسالة الأدمن
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: userId, message_id: request.adminMessageId });
     await bot.sendMessage(userId, '✅ Payment approved and codes sent.');
 
@@ -1078,10 +1063,7 @@ bot.on('callback_query', async (query) => {
     request.status = 'rejected';
     await request.save();
 
-    // إبلاغ المستخدم
     await bot.sendMessage(request.userId, await getText(request.userId, 'paymentRejected'));
-
-    // تحديث رسالة الأدمن
     await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: userId, message_id: request.adminMessageId });
     await bot.sendMessage(userId, '❌ Payment rejected.');
 
@@ -1089,7 +1071,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // الرد على الدعم (الأدمن)
+  // الرد على الدعم
   if (data.startsWith('support_reply_')) {
     if (!(await isAdmin(userId))) {
       await bot.answerCallbackQuery(query.id, { text: 'Unauthorized', show_alert: true });
@@ -1102,7 +1084,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // إذا لم يتم التعرف على callback
   await bot.answerCallbackQuery(query.id);
 });
 
@@ -1113,7 +1094,6 @@ bot.on('message', async (msg) => {
   const userId = msg.chat.id;
   const text = msg.text;
   const photo = msg.photo;
-  const caption = msg.caption;
 
   const user = await User.findByPk(userId);
   if (!user) return;
@@ -1183,7 +1163,6 @@ bot.on('message', async (msg) => {
         }
         return;
       } else if (state.step === 'name') {
-        // يمكن جعل اختيار الصلاحيات أكثر تفصيلاً، ولكن سنضع صلاحية الاسترداد كافتراضية
         await BotService.create({ token: state.token, name: text, allowedActions: ['redeem'] });
         await bot.sendMessage(userId, await getText(userId, 'botAdded'));
         await User.update({ state: null }, { where: { id: userId } });
@@ -1286,7 +1265,7 @@ bot.on('message', async (msg) => {
           nameEn: state.nameEn,
           nameAr: state.nameAr,
           details: text,
-          type: 'manual' // يمكن جعلها اختيارية
+          type: 'manual'
         });
         await bot.sendMessage(userId, await getText(userId, 'paymentMethodAdded'));
         await User.update({ state: null }, { where: { id: userId } });
@@ -1347,7 +1326,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // ========== معالجة الدفع الآلي (TXID) ==========
+  // ========== معالجة الدفع الآلي أو اليدوي ==========
   if (state && state.action === 'awaiting_tx') {
     const { merchantId, qty, total, paymentMethodId } = state;
     const method = await PaymentMethod.findByPk(paymentMethodId);
@@ -1358,7 +1337,6 @@ bot.on('message', async (msg) => {
     }
 
     if (method.type === 'auto') {
-      // دفع آلي - تحقق من TXID
       const txid = text.trim();
       const existingTx = await Transaction.findOne({ where: { txid } });
       if (existingTx) {
@@ -1392,13 +1370,11 @@ bot.on('message', async (msg) => {
       await sendMainMenu(userId);
       return;
     } else {
-      // دفع يدوي - انتظار صورة
       if (!photo) {
         await bot.sendMessage(userId, await getText(userId, 'sendImage'));
         return;
       }
       const fileId = photo[photo.length - 1].file_id;
-      // إنشاء طلب دفع يدوي
       const request = await ManualPaymentRequest.create({
         userId,
         merchantId,
@@ -1409,7 +1385,6 @@ bot.on('message', async (msg) => {
         status: 'pending'
       });
 
-      // إرسال الطلب لجميع الأدمن
       const merchantName = (await Merchant.findByPk(merchantId)).nameEn;
       const admins = await Admin.findAll();
       for (const admin of admins) {
@@ -1459,7 +1434,7 @@ bot.on('message', async (msg) => {
 });
 
 // ========================
-// 7. API للبوتات الأخرى (استرداد الكودات)
+// 7. API للبوتات الأخرى (منح صلاحية /code)
 // ========================
 app.post('/api/redeem', async (req, res) => {
   const { token, card_key, merchant_dict_id, platform_id } = req.body;
@@ -1477,7 +1452,6 @@ app.post('/api/redeem', async (req, res) => {
 
   const result = await redeemCard(card_key, merchant_dict_id, platform_id || '1');
 
-  // تسجيل الإحصائية
   const stat = await BotStat.findOne({ where: { botId: botService.id, action: 'redeem' } });
   if (stat) {
     stat.count += 1;
