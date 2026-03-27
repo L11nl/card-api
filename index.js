@@ -75,7 +75,7 @@ const PaymentMethod = sequelize.define('PaymentMethod', {
 const Code = sequelize.define('Code', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   value: { type: DataTypes.TEXT, allowNull: false },
-  extra: { type: DataTypes.TEXT, allowNull: true }, // للزوج الثاني (مثل الباسورد)
+  extra: { type: DataTypes.TEXT, allowNull: true },
   merchantId: { type: DataTypes.INTEGER, references: { model: Merchant, key: 'id' } },
   isUsed: { type: DataTypes.BOOLEAN, defaultValue: false },
   usedBy: { type: DataTypes.BIGINT, allowNull: true },
@@ -279,7 +279,13 @@ const DEFAULT_TEXTS = {
     enterDiscountMaxUses: 'Enter max uses (e.g., 100):',
     discountCodeAdded: '✅ Discount code added!',
     discountCodeDeleted: '❌ Discount code deleted!',
-    noDiscountCodes: 'No discount codes found.'
+    noDiscountCodes: 'No discount codes found.',
+    manageMenuButtons: '🎛️ Manage Menu Buttons',
+    hide: 'Hide',
+    show: 'Show',
+    buttonVisibilityUpdated: '✅ Button visibility updated!',
+    replyToUser: 'Reply to user {userId}:',
+    replyMessage: 'Your reply from support:'
   },
   ar: {
     start: '🌍 اختر اللغة',
@@ -407,7 +413,13 @@ const DEFAULT_TEXTS = {
     enterDiscountMaxUses: 'أدخل الحد الأقصى للاستخدام (مثال: 100):',
     discountCodeAdded: '✅ تمت إضافة كود الخصم!',
     discountCodeDeleted: '❌ تم حذف كود الخصم!',
-    noDiscountCodes: 'لا توجد كودات خصم.'
+    noDiscountCodes: 'لا توجد كودات خصم.',
+    manageMenuButtons: '🎛️ إدارة الأزرار',
+    hide: 'إخفاء',
+    show: 'إظهار',
+    buttonVisibilityUpdated: '✅ تم تحديث ظهور الأزرار!',
+    replyToUser: 'رد على المستخدم {userId}:',
+    replyMessage: 'ردك من الدعم الفني:'
   }
 };
 
@@ -469,23 +481,102 @@ async function applyDiscount(userId, discountCode, totalAmount) {
   return { success: true, newTotal, discountPercent: discount.discountPercent };
 }
 
+// ========================
+// دوال إدارة الأزرار (العامة)
+// ========================
+const DEFAULT_BUTTONS = {
+  redeem: true,
+  buy: true,
+  myBalance: true,
+  deposit: true,
+  referral: true,
+  discount: true,
+  myPurchases: true,
+  support: true
+};
+
+async function getMenuButtonsVisibility() {
+  const setting = await Setting.findOne({ where: { key: 'menu_buttons', lang: 'global' } });
+  if (!setting) return DEFAULT_BUTTONS;
+  try {
+    return JSON.parse(setting.value);
+  } catch {
+    return DEFAULT_BUTTONS;
+  }
+}
+
+async function setMenuButtonsVisibility(visibility) {
+  await Setting.upsert({
+    key: 'menu_buttons',
+    lang: 'global',
+    value: JSON.stringify(visibility)
+  });
+}
+
+async function showMenuButtonsAdmin(userId) {
+  const visibility = await getMenuButtonsVisibility();
+  const lang = (await User.findByPk(userId)).lang;
+  const buttons = [
+    { id: 'redeem', name: await getText(userId, 'redeem') },
+    { id: 'buy', name: await getText(userId, 'buy') },
+    { id: 'myBalance', name: await getText(userId, 'myBalance') },
+    { id: 'deposit', name: await getText(userId, 'deposit') },
+    { id: 'referral', name: await getText(userId, 'referral') },
+    { id: 'discount', name: await getText(userId, 'discount') },
+    { id: 'myPurchases', name: await getText(userId, 'myPurchases') },
+    { id: 'support', name: await getText(userId, 'support') }
+  ];
+  let msg = '🎛️ *Manage Menu Buttons*\nToggle each button to show/hide:\n\n';
+  const keyboard = [];
+  for (const btn of buttons) {
+    const status = visibility[btn.id] !== false;
+    const statusText = status ? '✅' : '❌';
+    const action = status ? 'hide' : 'show';
+    keyboard.push([{
+      text: `${statusText} ${btn.name}`,
+      callback_data: `toggle_button_${btn.id}_${action}`
+    }]);
+  }
+  keyboard.push([{ text: await getText(userId, 'back'), callback_data: 'admin' }]);
+  await bot.sendMessage(userId, msg, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+}
+
+async function toggleMenuButton(buttonId, newState, adminId) {
+  if (!isAdmin(adminId)) return false;
+  const visibility = await getMenuButtonsVisibility();
+  visibility[buttonId] = newState === 'show';
+  await setMenuButtonsVisibility(visibility);
+  return true;
+}
+
+// ========================
 // دوال عرض القوائم
+// ========================
 async function sendMainMenu(userId) {
   const menuText = await getText(userId, 'menu');
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: await getText(userId, 'redeem'), callback_data: 'redeem' }],
-      [{ text: await getText(userId, 'buy'), callback_data: 'buy' }],
-      [{ text: await getText(userId, 'myBalance'), callback_data: 'my_balance' }],
-      [{ text: await getText(userId, 'deposit'), callback_data: 'deposit' }],
-      [{ text: await getText(userId, 'referral'), callback_data: 'referral' }],
-      [{ text: await getText(userId, 'discount'), callback_data: 'discount' }],
-      [{ text: await getText(userId, 'myPurchases'), callback_data: 'my_purchases' }],
-      [{ text: await getText(userId, 'support'), callback_data: 'support' }],
-      ...((isAdmin(userId)) ? [[{ text: await getText(userId, 'adminPanel'), callback_data: 'admin' }]] : [])
-    ]
+  const visibility = await getMenuButtonsVisibility();
+  const buttons = [];
+
+  const addButton = (id, text) => {
+    if (visibility[id] !== false) {
+      buttons.push([{ text, callback_data: id }]);
+    }
   };
-  await bot.sendMessage(userId, menuText, { reply_markup: keyboard });
+
+  addButton('redeem', await getText(userId, 'redeem'));
+  addButton('buy', await getText(userId, 'buy'));
+  addButton('myBalance', await getText(userId, 'myBalance'));
+  addButton('deposit', await getText(userId, 'deposit'));
+  addButton('referral', await getText(userId, 'referral'));
+  addButton('discount', await getText(userId, 'discount'));
+  addButton('myPurchases', await getText(userId, 'myPurchases'));
+  addButton('support', await getText(userId, 'support'));
+
+  if (isAdmin(userId)) {
+    buttons.push([{ text: await getText(userId, 'adminPanel'), callback_data: 'admin' }]);
+  }
+
+  await bot.sendMessage(userId, menuText, { reply_markup: { inline_keyboard: buttons } });
 }
 
 async function showAdminPanel(userId) {
@@ -494,6 +585,7 @@ async function showAdminPanel(userId) {
   const keyboard = {
     inline_keyboard: [
       [{ text: await getText(userId, 'manageBots'), callback_data: 'admin_manage_bots' }],
+      [{ text: await getText(userId, 'manageMenuButtons'), callback_data: 'admin_manage_menu_buttons' }],
       [{ text: await getText(userId, 'addMerchant'), callback_data: 'admin_add_merchant' }],
       [{ text: await getText(userId, 'listMerchants'), callback_data: 'admin_list_merchants' }],
       [{ text: await getText(userId, 'setPrice'), callback_data: 'admin_set_price' }],
@@ -896,6 +988,37 @@ bot.on('callback_query', async (query) => {
     // لوحة الأدمن الرئيسية
     if (data === 'admin' && isAdmin(userId)) {
       await showAdminPanel(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // إدارة الأزرار
+    if (data === 'admin_manage_menu_buttons' && isAdmin(userId)) {
+      await showMenuButtonsAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تبديل زر
+    if (data.startsWith('toggle_button_') && isAdmin(userId)) {
+      const parts = data.split('_'); // toggle_button_<id>_<action>
+      const buttonId = parts[2];
+      const action = parts[3];
+      await toggleMenuButton(buttonId, action, userId);
+      await bot.answerCallbackQuery(query.id, { text: await getText(userId, 'buttonVisibilityUpdated') });
+      await showMenuButtonsAdmin(userId);
+      return;
+    }
+
+    // رد الدعم الفني
+    if (data.startsWith('support_reply_')) {
+      const targetUserId = parseInt(data.split('_')[2]);
+      if (!isAdmin(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: 'Unauthorized', show_alert: true });
+        return;
+      }
+      await User.update({ state: JSON.stringify({ action: 'support_reply', targetUserId }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'replyToUser', { userId: targetUserId }));
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -1491,6 +1614,31 @@ bot.on('message', async (msg) => {
 
     let state = user.state ? JSON.parse(user.state) : null;
 
+    // معالجة الرد على الدعم
+    if (state && state.action === 'support_reply' && isAdmin(userId)) {
+      const targetUserId = state.targetUserId;
+      if (text) {
+        const replyMsg = await getText(userId, 'replyMessage') + `\n\n${text}`;
+        await bot.sendMessage(targetUserId, replyMsg);
+        await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
+      } else if (photo) {
+        const fileId = photo[photo.length - 1].file_id;
+        const replyMsg = await getText(userId, 'replyMessage');
+        await bot.sendPhoto(targetUserId, fileId, { caption: replyMsg });
+        await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
+      } else if (video) {
+        const fileId = video.file_id;
+        const replyMsg = await getText(userId, 'replyMessage');
+        await bot.sendVideo(targetUserId, fileId, { caption: replyMsg });
+        await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
+      } else {
+        await bot.sendMessage(userId, 'Please send text, photo, or video.');
+        return;
+      }
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+
     if (state && isAdmin(userId)) {
       if (state.action === 'add_bot' && state.step === 'token') {
         try {
@@ -1830,7 +1978,7 @@ bot.on('message', async (msg) => {
       }
     }
 
-    // معالجة الدعم
+    // معالجة الدعم (إرسال رسالة من المستخدم)
     if (state && state.action === 'support') {
       let supportText = text || '';
       let photoFileId = null;
