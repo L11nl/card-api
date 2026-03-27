@@ -524,23 +524,46 @@ async function showMerchantsForBuy(userId) {
   const buttons = [];
   for (const [cat, list] of Object.entries(grouped)) {
     buttons.push([{ text: `📂 ${cat}`, callback_data: `ignore` }]);
-    list.forEach(m => {
+    for (const m of list) {
       const row = [];
       row.push({
         text: `${lang === 'en' ? m.nameEn : m.nameAr} - ${m.price} USD`,
         callback_data: `buy_merchant_${m.id}`
       });
       if (m.description && (m.description.content || m.description.fileId)) {
+        const showDescText = await getText(userId, 'showDescription');
         row.push({
-          text: await getText(userId, 'showDescription'),
+          text: showDescText,
           callback_data: `show_description_${m.id}`
         });
       }
       buttons.push(row);
-    });
+    }
   }
-  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
-  await bot.sendMessage(userId, await getText(userId, 'chooseMerchant'), { reply_markup: { inline_keyboard: buttons } });
+  const backText = await getText(userId, 'back');
+  buttons.push([{ text: backText, callback_data: 'back_to_menu' }]);
+  const chooseMerchantText = await getText(userId, 'chooseMerchant');
+  await bot.sendMessage(userId, chooseMerchantText, { reply_markup: { inline_keyboard: buttons } });
+}
+
+async function showMerchantsForRedeem(userId) {
+  const merchants = await Merchant.findAll({ order: [['category', 'ASC'], ['id', 'ASC']] });
+  if (merchants.length === 0) {
+    await bot.sendMessage(userId, await getText(userId, 'noCodes'));
+    return sendMainMenu(userId);
+  }
+  const lang = (await User.findByPk(userId)).lang;
+  const buttons = [];
+  for (const m of merchants) {
+    buttons.push([{
+      text: lang === 'en' ? m.nameEn : m.nameAr,
+      callback_data: `redeem_merchant_${m.id}`
+    }]);
+  }
+  const backText = await getText(userId, 'back');
+  buttons.push([{ text: backText, callback_data: 'back_to_menu' }]);
+  const chooseMerchantText = await getText(userId, 'chooseMerchant');
+  await bot.sendMessage(userId, chooseMerchantText, { reply_markup: { inline_keyboard: buttons } });
 }
 
 async function showPaymentMethodsForDeposit(userId, amount) {
@@ -550,12 +573,17 @@ async function showPaymentMethodsForDeposit(userId, amount) {
     return sendMainMenu(userId);
   }
   const lang = (await User.findByPk(userId)).lang;
-  const buttons = methods.map(m => ([{
-    text: `${lang === 'en' ? m.nameEn : m.nameAr} (Min: ${m.minDeposit} / Max: ${m.maxDeposit})`,
-    callback_data: `deposit_method_${m.id}_${amount}`
-  }]));
-  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
-  await bot.sendMessage(userId, await getText(userId, 'choosePaymentMethod'), { reply_markup: { inline_keyboard: buttons } });
+  const buttons = [];
+  for (const m of methods) {
+    buttons.push([{
+      text: `${lang === 'en' ? m.nameEn : m.nameAr} (Min: ${m.minDeposit} / Max: ${m.maxDeposit})`,
+      callback_data: `deposit_method_${m.id}_${amount}`
+    }]);
+  }
+  const backText = await getText(userId, 'back');
+  buttons.push([{ text: backText, callback_data: 'back_to_menu' }]);
+  const chooseMethodText = await getText(userId, 'choosePaymentMethod');
+  await bot.sendMessage(userId, chooseMethodText, { reply_markup: { inline_keyboard: buttons } });
 }
 
 async function showBotsList(userId) {
@@ -578,10 +606,11 @@ async function showBotsList(userId) {
       await bot.sendMessage(userId, `🤖 *${b.name}*\nID: ${b.id}\nAllowed: ${b.allowedActions.join(', ') || 'none'}\nOwner: ${b.ownerId || 'none'}`, { parse_mode: 'Markdown', reply_markup: keyboard });
     }
   }
+  const addBotText = await getText(userId, 'addBot');
   const addBtn = {
-    inline_keyboard: [[{ text: await getText(userId, 'addBot'), callback_data: 'admin_add_bot' }]]
+    inline_keyboard: [[{ text: addBotText, callback_data: 'admin_add_bot' }]]
   };
-  await bot.sendMessage(userId, await getText(userId, 'addBot'), { reply_markup: addBtn });
+  await bot.sendMessage(userId, addBotText, { reply_markup: addBtn });
 }
 
 async function showRedeemServices(userId) {
@@ -591,12 +620,17 @@ async function showRedeemServices(userId) {
     return sendMainMenu(userId);
   }
   const lang = (await User.findByPk(userId)).lang;
-  const buttons = services.map(s => ([{
-    text: lang === 'en' ? s.nameEn : s.nameAr,
-    callback_data: `redeem_service_${s.id}`
-  }]));
-  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
-  await bot.sendMessage(userId, await getText(userId, 'chooseRedeemService'), { reply_markup: { inline_keyboard: buttons } });
+  const buttons = [];
+  for (const s of services) {
+    buttons.push([{
+      text: lang === 'en' ? s.nameEn : s.nameAr,
+      callback_data: `redeem_service_${s.id}`
+    }]);
+  }
+  const backText = await getText(userId, 'back');
+  buttons.push([{ text: backText, callback_data: 'back_to_menu' }]);
+  const chooseServiceText = await getText(userId, 'chooseRedeemService');
+  await bot.sendMessage(userId, chooseServiceText, { reply_markup: { inline_keyboard: buttons } });
 }
 
 async function showRedeemServicesAdmin(userId) {
@@ -605,11 +639,14 @@ async function showRedeemServicesAdmin(userId) {
   for (const s of services) {
     msg += `ID: ${s.id} | ${s.nameEn} / ${s.nameAr} | MerchantDict: ${s.merchantDictId}\n`;
   }
+  const addText = await getText(userId, 'addRedeemService');
+  const delText = await getText(userId, 'deleteRedeemService');
+  const backText = await getText(userId, 'back');
   const keyboard = {
     inline_keyboard: [
-      [{ text: await getText(userId, 'addRedeemService'), callback_data: 'admin_add_redeem_service' }],
-      [{ text: await getText(userId, 'deleteRedeemService'), callback_data: 'admin_delete_redeem_service' }],
-      [{ text: await getText(userId, 'back'), callback_data: 'admin' }]
+      [{ text: addText, callback_data: 'admin_add_redeem_service' }],
+      [{ text: delText, callback_data: 'admin_delete_redeem_service' }],
+      [{ text: backText, callback_data: 'admin' }]
     ]
   };
   await bot.sendMessage(userId, msg, { reply_markup: keyboard });
@@ -621,11 +658,14 @@ async function showDiscountCodesAdmin(userId) {
   for (const c of codes) {
     msg += `ID: ${c.id} | ${c.code} | ${c.discountPercent}% | Uses: ${c.usedCount}/${c.maxUses} | Expires: ${c.validUntil ? c.validUntil.toISOString().split('T')[0] : 'never'}\n`;
   }
+  const addText = await getText(userId, 'addDiscountCode');
+  const delText = await getText(userId, 'deleteDiscountCode');
+  const backText = await getText(userId, 'back');
   const keyboard = {
     inline_keyboard: [
-      [{ text: await getText(userId, 'addDiscountCode'), callback_data: 'admin_add_discount_code' }],
-      [{ text: await getText(userId, 'deleteDiscountCode'), callback_data: 'admin_delete_discount_code' }],
-      [{ text: await getText(userId, 'back'), callback_data: 'admin' }]
+      [{ text: addText, callback_data: 'admin_add_discount_code' }],
+      [{ text: delText, callback_data: 'admin_delete_discount_code' }],
+      [{ text: backText, callback_data: 'admin' }]
     ]
   };
   await bot.sendMessage(userId, msg || await getText(userId, 'noDiscountCodes'), { reply_markup: keyboard });
@@ -1104,12 +1144,16 @@ bot.on('callback_query', async (query) => {
       for (const m of methods) {
         msg += `ID: ${m.id} | ${m.nameEn} (${m.type}) - Active: ${m.isActive}\n`;
       }
+      const addText = '➕ Add New';
+      const delText = '🗑️ Delete';
+      const limitsText = '⚙️ Set Limits';
+      const backText = await getText(userId, 'back');
       const keyboard = {
         inline_keyboard: [
-          [{ text: '➕ Add New', callback_data: 'admin_add_payment' }],
-          [{ text: '🗑️ Delete', callback_data: 'admin_delete_payment' }],
-          [{ text: '⚙️ Set Limits', callback_data: 'admin_set_limits' }],
-          [{ text: '🔙 Back', callback_data: 'admin' }]
+          [{ text: addText, callback_data: 'admin_add_payment' }],
+          [{ text: delText, callback_data: 'admin_delete_payment' }],
+          [{ text: limitsText, callback_data: 'admin_set_limits' }],
+          [{ text: backText, callback_data: 'admin' }]
         ]
       };
       await bot.sendMessage(userId, msg, { reply_markup: keyboard });
@@ -1132,12 +1176,16 @@ bot.on('callback_query', async (query) => {
       for (const m of merchants) {
         msg += `ID: ${m.id} | ${m.nameEn} / ${m.nameAr} | Price: ${m.price} USD | Category: ${m.category} | Type: ${m.type}\n`;
       }
+      const editText = '✏️ Edit';
+      const delText = '🗑️ Delete';
+      const catText = '📂 Edit Category';
+      const backText = await getText(userId, 'back');
       const keyboard = {
         inline_keyboard: [
-          [{ text: '✏️ Edit', callback_data: 'admin_edit_merchant' }],
-          [{ text: '🗑️ Delete', callback_data: 'admin_delete_merchant' }],
-          [{ text: '📂 Edit Category', callback_data: 'admin_edit_category' }],
-          [{ text: '🔙 Back', callback_data: 'admin' }]
+          [{ text: editText, callback_data: 'admin_edit_merchant' }],
+          [{ text: delText, callback_data: 'admin_delete_merchant' }],
+          [{ text: catText, callback_data: 'admin_edit_category' }],
+          [{ text: backText, callback_data: 'admin' }]
         ]
       };
       await bot.sendMessage(userId, msg, { reply_markup: keyboard });
@@ -1149,8 +1197,12 @@ bot.on('callback_query', async (query) => {
     if (data === 'admin_set_price' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       let msg = await getText(userId, 'selectMerchantToSetPrice') + '\n';
-      const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `set_price_merchant_${m.id}` }]));
-      buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin' }]);
+      const buttons = [];
+      for (const m of merchants) {
+        buttons.push([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `set_price_merchant_${m.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin' }]);
       await bot.sendMessage(userId, msg, { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1168,8 +1220,12 @@ bot.on('callback_query', async (query) => {
     if (data === 'admin_add_codes' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
       let msg = await getText(userId, 'selectMerchantToAddCodes') + '\n';
-      const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `add_codes_merchant_${m.id}` }]));
-      buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin' }]);
+      const buttons = [];
+      for (const m of merchants) {
+        buttons.push([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `add_codes_merchant_${m.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin' }]);
       await bot.sendMessage(userId, msg, { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1207,8 +1263,12 @@ bot.on('callback_query', async (query) => {
 
     if (data === 'admin_delete_redeem_service' && isAdmin(userId)) {
       const services = await RedeemService.findAll();
-      const buttons = services.map(s => ([{ text: `${s.nameEn} (ID: ${s.id})`, callback_data: `delete_redeem_service_${s.id}` }]));
-      buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin_manage_redeem_services' }]);
+      const buttons = [];
+      for (const s of services) {
+        buttons.push([{ text: `${s.nameEn} (ID: ${s.id})`, callback_data: `delete_redeem_service_${s.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin_manage_redeem_services' }]);
       await bot.sendMessage(userId, 'Select service to delete:', { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1239,8 +1299,12 @@ bot.on('callback_query', async (query) => {
 
     if (data === 'admin_delete_discount_code' && isAdmin(userId)) {
       const codes = await DiscountCode.findAll();
-      const buttons = codes.map(c => ([{ text: `${c.code} (${c.discountPercent}%)`, callback_data: `delete_discount_code_${c.id}` }]));
-      buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin_manage_discount_codes' }]);
+      const buttons = [];
+      for (const c of codes) {
+        buttons.push([{ text: `${c.code} (${c.discountPercent}%)`, callback_data: `delete_discount_code_${c.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin_manage_discount_codes' }]);
       await bot.sendMessage(userId, 'Select discount code to delete:', { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1258,8 +1322,12 @@ bot.on('callback_query', async (query) => {
     // تعديل تاجر
     if (data === 'admin_edit_merchant' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
-      const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `edit_merchant_${m.id}` }]));
-      buttons.push([{ text: '🔙 Back', callback_data: 'admin_list_merchants' }]);
+      const buttons = [];
+      for (const m of merchants) {
+        buttons.push([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `edit_merchant_${m.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin_list_merchants' }]);
       await bot.sendMessage(userId, 'Select merchant to edit:', { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1276,8 +1344,12 @@ bot.on('callback_query', async (query) => {
     // حذف تاجر
     if (data === 'admin_delete_merchant' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
-      const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `delete_merchant_${m.id}` }]));
-      buttons.push([{ text: '🔙 Back', callback_data: 'admin_list_merchants' }]);
+      const buttons = [];
+      for (const m of merchants) {
+        buttons.push([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `delete_merchant_${m.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin_list_merchants' }]);
       await bot.sendMessage(userId, 'Select merchant to delete:', { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1286,11 +1358,13 @@ bot.on('callback_query', async (query) => {
     if (data.startsWith('delete_merchant_') && isAdmin(userId)) {
       const merchantId = parseInt(data.split('_')[2]);
       await User.update({ state: JSON.stringify({ action: 'confirm_delete_merchant', merchantId }) }, { where: { id: userId } });
+      const yesText = await getText(userId, 'yes');
+      const noText = await getText(userId, 'no');
       await bot.sendMessage(userId, await getText(userId, 'confirmDelete'), {
         reply_markup: {
           inline_keyboard: [
-            [{ text: await getText(userId, 'yes'), callback_data: `confirm_delete_merchant_yes_${merchantId}` }],
-            [{ text: await getText(userId, 'no'), callback_data: 'admin_list_merchants' }]
+            [{ text: yesText, callback_data: `confirm_delete_merchant_yes_${merchantId}` }],
+            [{ text: noText, callback_data: 'admin_list_merchants' }]
           ]
         }
       });
@@ -1309,8 +1383,12 @@ bot.on('callback_query', async (query) => {
     // تعديل التصنيف
     if (data === 'admin_edit_category' && isAdmin(userId)) {
       const merchants = await Merchant.findAll();
-      const buttons = merchants.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `edit_category_${m.id}` }]));
-      buttons.push([{ text: '🔙 Back', callback_data: 'admin_list_merchants' }]);
+      const buttons = [];
+      for (const m of merchants) {
+        buttons.push([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `edit_category_${m.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin_list_merchants' }]);
       await bot.sendMessage(userId, 'Select merchant to edit category:', { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1335,8 +1413,12 @@ bot.on('callback_query', async (query) => {
     // حذف طريقة دفع
     if (data === 'admin_delete_payment' && isAdmin(userId)) {
       const methods = await PaymentMethod.findAll();
-      const buttons = methods.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `delete_payment_${m.id}` }]));
-      buttons.push([{ text: '🔙 Back', callback_data: 'admin_payment_methods' }]);
+      const buttons = [];
+      for (const m of methods) {
+        buttons.push([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `delete_payment_${m.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin_payment_methods' }]);
       await bot.sendMessage(userId, 'Select payment method to delete:', { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1353,8 +1435,12 @@ bot.on('callback_query', async (query) => {
     // تعيين حدود الإيداع
     if (data === 'admin_set_limits' && isAdmin(userId)) {
       const methods = await PaymentMethod.findAll();
-      const buttons = methods.map(m => ([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `set_limits_${m.id}` }]));
-      buttons.push([{ text: '🔙 Back', callback_data: 'admin_payment_methods' }]);
+      const buttons = [];
+      for (const m of methods) {
+        buttons.push([{ text: `${m.nameEn} (ID: ${m.id})`, callback_data: `set_limits_${m.id}` }]);
+      }
+      const backText = await getText(userId, 'back');
+      buttons.push([{ text: backText, callback_data: 'admin_payment_methods' }]);
       await bot.sendMessage(userId, 'Select payment method to set limits:', { reply_markup: { inline_keyboard: buttons } });
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1460,10 +1546,12 @@ bot.on('message', async (msg) => {
             return;
           }
           await User.update({ state: JSON.stringify({ ...state, price, step: 'type' }) }, { where: { id: userId } });
+          const typeSingleText = await getText(userId, 'typeSingle');
+          const typeBulkText = await getText(userId, 'typeBulk');
           const keyboard = {
             inline_keyboard: [
-              [{ text: await getText(userId, 'typeSingle'), callback_data: 'merchant_type_single' }],
-              [{ text: await getText(userId, 'typeBulk'), callback_data: 'merchant_type_bulk' }]
+              [{ text: typeSingleText, callback_data: 'merchant_type_single' }],
+              [{ text: typeBulkText, callback_data: 'merchant_type_bulk' }]
             ]
           };
           await bot.sendMessage(userId, await getText(userId, 'askMerchantType'), { reply_markup: keyboard });
