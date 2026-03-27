@@ -55,7 +55,9 @@ const Merchant = sequelize.define('Merchant', {
   nameEn: { type: DataTypes.STRING, allowNull: false },
   nameAr: { type: DataTypes.STRING, allowNull: false },
   price: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 0 },
-  category: { type: DataTypes.STRING, defaultValue: 'general' }
+  category: { type: DataTypes.STRING, defaultValue: 'general' },
+  type: { type: DataTypes.STRING, defaultValue: 'single' }, // 'single' or 'bulk'
+  description: { type: DataTypes.JSONB, allowNull: true } // { type: 'text', content: '...' } or { type: 'photo', fileId: '...' }
 });
 
 const PaymentMethod = sequelize.define('PaymentMethod', {
@@ -73,6 +75,7 @@ const PaymentMethod = sequelize.define('PaymentMethod', {
 const Code = sequelize.define('Code', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   value: { type: DataTypes.TEXT, allowNull: false },
+  extra: { type: DataTypes.TEXT, allowNull: true }, // للزوج الثاني (مثل الباسورد)
   merchantId: { type: DataTypes.INTEGER, references: { model: Merchant, key: 'id' } },
   isUsed: { type: DataTypes.BOOLEAN, defaultValue: false },
   usedBy: { type: DataTypes.BIGINT, allowNull: true },
@@ -125,6 +128,14 @@ const ReferralReward = sequelize.define('ReferralReward', {
   referredId: { type: DataTypes.BIGINT, allowNull: false },
   amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
   status: { type: DataTypes.STRING, defaultValue: 'pending' }
+});
+
+const RedeemService = sequelize.define('RedeemService', {
+  id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  nameEn: { type: DataTypes.STRING, allowNull: false },
+  nameAr: { type: DataTypes.STRING, allowNull: false },
+  merchantDictId: { type: DataTypes.STRING, allowNull: false }, // معرف التاجر في نظام NodeCard
+  platformId: { type: DataTypes.STRING, defaultValue: '1' }
 });
 
 // العلاقات
@@ -237,17 +248,38 @@ const DEFAULT_TEXTS = {
     editCategory: '📂 Edit Category',
     askCategory: 'Send category name (e.g., gaming, giftcard):',
     categoryUpdated: 'Category updated!',
-    backupData: '💾 Backup Data',
-    backupSuccess: 'Backup completed and sent to admin.',
-    exportStats: '📈 Export Stats (CSV)',
-    statsExported: 'Stats exported as CSV file.',
-    setMinMaxDeposit: '⚙️ Set Deposit Limits',
-    minDepositSet: 'Minimum deposit set to {min} USD.',
-    maxDepositSet: 'Maximum deposit set to {max} USD.',
     referralSettings: '👥 Referral Settings',
     setReferralPercent: 'Set referral reward percentage:',
     referralPercentUpdated: 'Referral reward percentage updated to {percent}%.',
-    redeemViaApi: '🔑 Redeem via API (for bots)'
+    redeemViaApi: '🔑 Redeem via API (for bots)',
+    askMerchantType: 'Select merchant type:',
+    typeSingle: 'Single (one code per line)',
+    typeBulk: 'Bulk (email/password pairs)',
+    askDescription: 'Send description (text, photo, video, or /skip):',
+    descriptionSaved: '✅ Description saved!',
+    showDescription: '📖 View Description',
+    manageRedeemServices: '🔄 Manage Redeem Services',
+    addRedeemService: '➕ Add Redeem Service',
+    listRedeemServices: '📋 List Redeem Services',
+    deleteRedeemService: '🗑️ Delete Redeem Service',
+    redeemServiceNameEn: 'Send service name in English:',
+    redeemServiceNameAr: 'Send service name in Arabic:',
+    redeemServiceMerchantId: 'Send merchant dict ID (from NodeCard):',
+    redeemServicePlatformId: 'Send platform ID (default 1):',
+    redeemServiceAdded: '✅ Redeem service added!',
+    chooseRedeemService: 'Choose the service to redeem:',
+    sendCodeToRedeem: 'Send the code to redeem:',
+    manageDiscountCodes: '🎟️ Manage Discount Codes',
+    addDiscountCode: '➕ Add Discount Code',
+    listDiscountCodes: '📋 List Discount Codes',
+    deleteDiscountCode: '🗑️ Delete Discount Code',
+    enterDiscountCodeValue: 'Enter discount code (e.g., SAVE10):',
+    enterDiscountPercent: 'Enter discount percentage (e.g., 10):',
+    enterDiscountValidUntil: 'Enter expiry date (YYYY-MM-DD) or /skip:',
+    enterDiscountMaxUses: 'Enter max uses (e.g., 100):',
+    discountCodeAdded: '✅ Discount code added!',
+    discountCodeDeleted: '❌ Discount code deleted!',
+    noDiscountCodes: 'No discount codes found.'
   },
   ar: {
     start: '🌍 اختر اللغة',
@@ -344,17 +376,38 @@ const DEFAULT_TEXTS = {
     editCategory: '📂 تعديل التصنيف',
     askCategory: 'أرسل اسم التصنيف (مثال: ألعاب، بطاقات هدايا):',
     categoryUpdated: 'تم تحديث التصنيف!',
-    backupData: '💾 نسخ احتياطي',
-    backupSuccess: 'تم إنشاء النسخ الاحتياطي وإرسالها إلى الأدمن.',
-    exportStats: '📈 تصدير الإحصائيات (CSV)',
-    statsExported: 'تم تصدير الإحصائيات كملف CSV.',
-    setMinMaxDeposit: '⚙️ تعيين حدود الإيداع',
-    minDepositSet: 'تم تعيين الحد الأدنى للإيداع إلى {min} دولار.',
-    maxDepositSet: 'تم تعيين الحد الأقصى للإيداع إلى {max} دولار.',
     referralSettings: '👥 إعدادات الإحالة',
     setReferralPercent: 'أدخل نسبة مكافأة الإحالة:',
     referralPercentUpdated: 'تم تحديث نسبة مكافأة الإحالة إلى {percent}%.',
-    redeemViaApi: '🔑 استرداد عبر API (للبوتات)'
+    redeemViaApi: '🔑 استرداد عبر API (للبوتات)',
+    askMerchantType: 'اختر نوع التاجر:',
+    typeSingle: 'فردي (كود واحد في كل سطر)',
+    typeBulk: 'جملة (إيميل وباسورد في سطرين)',
+    askDescription: 'أرسل شرح توضيحي (نص، صورة، فيديو، أو /skip):',
+    descriptionSaved: '✅ تم حفظ الشرح!',
+    showDescription: '📖 عرض الشرح',
+    manageRedeemServices: '🔄 إدارة خدمات الاسترداد',
+    addRedeemService: '➕ إضافة خدمة استرداد',
+    listRedeemServices: '📋 قائمة خدمات الاسترداد',
+    deleteRedeemService: '🗑️ حذف خدمة استرداد',
+    redeemServiceNameEn: 'أرسل اسم الخدمة بالإنجليزية:',
+    redeemServiceNameAr: 'أرسل اسم الخدمة بالعربية:',
+    redeemServiceMerchantId: 'أرسل معرف التاجر في NodeCard:',
+    redeemServicePlatformId: 'أرسل معرف المنصة (افتراضي 1):',
+    redeemServiceAdded: '✅ تمت إضافة خدمة الاسترداد!',
+    chooseRedeemService: 'اختر الخدمة المراد استرداد الكود فيها:',
+    sendCodeToRedeem: 'أرسل الكود المراد استرداده:',
+    manageDiscountCodes: '🎟️ إدارة كودات الخصم',
+    addDiscountCode: '➕ إضافة كود خصم',
+    listDiscountCodes: '📋 قائمة كودات الخصم',
+    deleteDiscountCode: '🗑️ حذف كود خصم',
+    enterDiscountCodeValue: 'أدخل كود الخصم (مثال: SAVE10):',
+    enterDiscountPercent: 'أدخل نسبة الخصم (مثال: 10):',
+    enterDiscountValidUntil: 'أدخل تاريخ الانتهاء (YYYY-MM-DD) أو /skip:',
+    enterDiscountMaxUses: 'أدخل الحد الأقصى للاستخدام (مثال: 100):',
+    discountCodeAdded: '✅ تمت إضافة كود الخصم!',
+    discountCodeDeleted: '❌ تم حذف كود الخصم!',
+    noDiscountCodes: 'لا توجد كودات خصم.'
   }
 };
 
@@ -450,8 +503,8 @@ async function showAdminPanel(userId) {
       [{ text: await getText(userId, 'paymentMethods'), callback_data: 'admin_payment_methods' }],
       [{ text: await getText(userId, 'stats'), callback_data: 'admin_stats' }],
       [{ text: await getText(userId, 'referralSettings'), callback_data: 'admin_referral_settings' }],
-      [{ text: await getText(userId, 'backupData'), callback_data: 'admin_backup' }],
-      [{ text: await getText(userId, 'exportStats'), callback_data: 'admin_export_stats' }],
+      [{ text: await getText(userId, 'manageRedeemServices'), callback_data: 'admin_manage_redeem_services' }],
+      [{ text: await getText(userId, 'manageDiscountCodes'), callback_data: 'admin_manage_discount_codes' }],
       [{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]
     ]
   };
@@ -461,7 +514,7 @@ async function showAdminPanel(userId) {
 async function showMerchantsForBuy(userId) {
   const merchants = await Merchant.findAll({ order: [['category', 'ASC'], ['id', 'ASC']] });
   if (merchants.length === 0) {
-    await bot.sendMessage(userId, '❌ No merchants available.');
+    await bot.sendMessage(userId, await getText(userId, 'noCodes'));
     return sendMainMenu(userId);
   }
   const lang = (await User.findByPk(userId)).lang;
@@ -474,27 +527,20 @@ async function showMerchantsForBuy(userId) {
   for (const [cat, list] of Object.entries(grouped)) {
     buttons.push([{ text: `📂 ${cat}`, callback_data: `ignore` }]);
     list.forEach(m => {
-      buttons.push([{
+      const row = [];
+      row.push({
         text: `${lang === 'en' ? m.nameEn : m.nameAr} - ${m.price} USD`,
         callback_data: `buy_merchant_${m.id}`
-      }]);
+      });
+      if (m.description && (m.description.content || m.description.fileId)) {
+        row.push({
+          text: await getText(userId, 'showDescription'),
+          callback_data: `show_description_${m.id}`
+        });
+      }
+      buttons.push(row);
     });
   }
-  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
-  await bot.sendMessage(userId, await getText(userId, 'chooseMerchant'), { reply_markup: { inline_keyboard: buttons } });
-}
-
-async function showMerchantsForRedeem(userId) {
-  const merchants = await Merchant.findAll({ order: [['category', 'ASC'], ['id', 'ASC']] });
-  if (merchants.length === 0) {
-    await bot.sendMessage(userId, '❌ No merchants available.');
-    return sendMainMenu(userId);
-  }
-  const lang = (await User.findByPk(userId)).lang;
-  const buttons = merchants.map(m => ([{
-    text: lang === 'en' ? m.nameEn : m.nameAr,
-    callback_data: `redeem_merchant_${m.id}`
-  }]));
   buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
   await bot.sendMessage(userId, await getText(userId, 'chooseMerchant'), { reply_markup: { inline_keyboard: buttons } });
 }
@@ -519,35 +565,82 @@ async function showBotsList(userId) {
   const bots = await BotService.findAll();
   if (bots.length === 0) {
     await bot.sendMessage(userId, 'No bots found.');
-    return;
-  }
-  for (const b of bots) {
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: '➕ Grant /code', callback_data: `bot_grant_code_${b.id}` },
-          { text: '👑 Grant Full', callback_data: `bot_grant_full_${b.id}` },
-          { text: '❌ Remove Permissions', callback_data: `bot_remove_perms_${b.id}` }
-        ],
-        [{ text: '🗑️ Delete Bot', callback_data: `admin_remove_bot_confirm_${b.id}` }]
-      ]
-    };
-    await bot.sendMessage(userId, `🤖 *${b.name}*\nID: ${b.id}\nAllowed: ${b.allowedActions.join(', ') || 'none'}\nOwner: ${b.ownerId || 'none'}`, { parse_mode: 'Markdown', reply_markup: keyboard });
+  } else {
+    for (const b of bots) {
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '➕ Grant /code', callback_data: `bot_grant_code_${b.id}` },
+            { text: '👑 Grant Full', callback_data: `bot_grant_full_${b.id}` },
+            { text: '❌ Remove Permissions', callback_data: `bot_remove_perms_${b.id}` }
+          ],
+          [{ text: '🗑️ Delete Bot', callback_data: `admin_remove_bot_confirm_${b.id}` }]
+        ]
+      };
+      await bot.sendMessage(userId, `🤖 *${b.name}*\nID: ${b.id}\nAllowed: ${b.allowedActions.join(', ') || 'none'}\nOwner: ${b.ownerId || 'none'}`, { parse_mode: 'Markdown', reply_markup: keyboard });
+    }
   }
   const addBtn = {
-    inline_keyboard: [[{ text: '➕ Add New Bot', callback_data: 'admin_add_bot' }]]
+    inline_keyboard: [[{ text: await getText(userId, 'addBot'), callback_data: 'admin_add_bot' }]]
   };
-  await bot.sendMessage(userId, 'To add a new bot, click the button below:', { reply_markup: addBtn });
+  await bot.sendMessage(userId, await getText(userId, 'addBot'), { reply_markup: addBtn });
+}
+
+async function showRedeemServices(userId) {
+  const services = await RedeemService.findAll();
+  if (services.length === 0) {
+    await bot.sendMessage(userId, '❌ No redeem services available.');
+    return sendMainMenu(userId);
+  }
+  const lang = (await User.findByPk(userId)).lang;
+  const buttons = services.map(s => ([{
+    text: lang === 'en' ? s.nameEn : s.nameAr,
+    callback_data: `redeem_service_${s.id}`
+  }]));
+  buttons.push([{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]);
+  await bot.sendMessage(userId, await getText(userId, 'chooseRedeemService'), { reply_markup: { inline_keyboard: buttons } });
+}
+
+async function showRedeemServicesAdmin(userId) {
+  const services = await RedeemService.findAll();
+  let msg = await getText(userId, 'listRedeemServices') + '\n';
+  for (const s of services) {
+    msg += `ID: ${s.id} | ${s.nameEn} / ${s.nameAr} | MerchantDict: ${s.merchantDictId}\n`;
+  }
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: await getText(userId, 'addRedeemService'), callback_data: 'admin_add_redeem_service' }],
+      [{ text: await getText(userId, 'deleteRedeemService'), callback_data: 'admin_delete_redeem_service' }],
+      [{ text: await getText(userId, 'back'), callback_data: 'admin' }]
+    ]
+  };
+  await bot.sendMessage(userId, msg, { reply_markup: keyboard });
+}
+
+async function showDiscountCodesAdmin(userId) {
+  const codes = await DiscountCode.findAll();
+  let msg = await getText(userId, 'listDiscountCodes') + '\n';
+  for (const c of codes) {
+    msg += `ID: ${c.id} | ${c.code} | ${c.discountPercent}% | Uses: ${c.usedCount}/${c.maxUses} | Expires: ${c.validUntil ? c.validUntil.toISOString().split('T')[0] : 'never'}\n`;
+  }
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: await getText(userId, 'addDiscountCode'), callback_data: 'admin_add_discount_code' }],
+      [{ text: await getText(userId, 'deleteDiscountCode'), callback_data: 'admin_delete_discount_code' }],
+      [{ text: await getText(userId, 'back'), callback_data: 'admin' }]
+    ]
+  };
+  await bot.sendMessage(userId, msg || await getText(userId, 'noDiscountCodes'), { reply_markup: keyboard });
 }
 
 // دوال الاسترداد (نفس السابق)
-async function redeemCard(cardKey, merchantId, platformId = '1') {
+async function redeemCard(cardKey, merchantDictId, platformId = '1') {
   try {
     const apiKey = process.env.NODE_CARD_API_KEY;
     const baseUrl = process.env.NODE_CARD_BASE_URL || 'https://api.node-card.com';
     const params = new URLSearchParams();
     params.append('card_key', cardKey);
-    params.append('merchant_dict_id', merchantId);
+    params.append('merchant_dict_id', merchantDictId);
     params.append('platform_id', platformId);
     if (apiKey) params.append('api_key', apiKey);
 
@@ -616,8 +709,16 @@ async function processPurchase(userId, merchantId, quantity, discountCode = null
     }, { transaction: t });
     await Code.update({ isUsed: true, usedBy: userId, soldAt: new Date() }, { where: { id: codes.map(c => c.id) }, transaction: t });
     await t.commit();
-    const codesList = codes.map(c => c.value).join('\n');
-    return { success: true, codes: codesList, discountApplied: discountPercent };
+
+    let codesList = '';
+    for (const c of codes) {
+      if (c.extra) {
+        codesList += `${c.value}\n${c.extra}\n\n`;
+      } else {
+        codesList += `${c.value}\n\n`;
+      }
+    }
+    return { success: true, codes: codesList.trim(), discountApplied: discountPercent };
   } catch (err) {
     await t.rollback();
     console.error('Purchase transaction error:', err);
@@ -686,34 +787,6 @@ async function rejectDeposit(depositId, adminId) {
   const rejectMsg = await getText(deposit.userId, 'depositRejected');
   await bot.sendMessage(deposit.userId, rejectMsg);
   return true;
-}
-
-async function exportStatsCSV() {
-  const merchants = await Merchant.findAll({ include: Code });
-  const users = await User.findAll();
-  let csv = 'Merchant,Total Codes,Used Codes,Sales\n';
-  for (const m of merchants) {
-    const totalCodes = m.Codes.length;
-    const usedCodes = m.Codes.filter(c => c.isUsed).length;
-    const sales = await BalanceTransaction.sum('amount', { where: { type: 'purchase', status: 'completed' } });
-    csv += `"${m.nameEn}",${totalCodes},${usedCodes},${sales || 0}\n`;
-  }
-  csv += '\nUsers\nID,Balance,Purchases\n';
-  for (const u of users) {
-    csv += `${u.id},${u.balance},${u.totalPurchases}\n`;
-  }
-  return csv;
-}
-
-async function backupDatabase() {
-  const backup = {
-    merchants: await Merchant.findAll(),
-    users: await User.findAll(),
-    codes: await Code.findAll(),
-    paymentMethods: await PaymentMethod.findAll(),
-    balanceTransactions: await BalanceTransaction.findAll()
-  };
-  return JSON.stringify(backup);
 }
 
 // ========================
@@ -947,7 +1020,15 @@ bot.on('callback_query', async (query) => {
     }
 
     if (data === 'redeem') {
-      await showMerchantsForRedeem(userId);
+      await showRedeemServices(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data.startsWith('redeem_service_')) {
+      const serviceId = parseInt(data.split('_')[2]);
+      await User.update({ state: JSON.stringify({ action: 'redeem_via_service', serviceId }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'sendCodeToRedeem'));
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -967,10 +1048,21 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    if (data.startsWith('redeem_merchant_')) {
+    if (data.startsWith('show_description_')) {
       const merchantId = parseInt(data.split('_')[2]);
-      await User.update({ state: JSON.stringify({ action: 'redeem', merchantId }) }, { where: { id: userId } });
-      await bot.sendMessage(userId, await getText(userId, 'sendCode'));
+      const merchant = await Merchant.findByPk(merchantId);
+      if (merchant && merchant.description) {
+        const desc = merchant.description;
+        if (desc.type === 'text') {
+          await bot.sendMessage(userId, desc.content);
+        } else if (desc.type === 'photo') {
+          await bot.sendPhoto(userId, desc.fileId);
+        } else if (desc.type === 'video') {
+          await bot.sendVideo(userId, desc.fileId);
+        }
+      } else {
+        await bot.sendMessage(userId, 'No description available.');
+      }
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -1018,7 +1110,7 @@ bot.on('callback_query', async (query) => {
       const merchants = await Merchant.findAll();
       let msg = await getText(userId, 'merchantList');
       for (const m of merchants) {
-        msg += `ID: ${m.id} | ${m.nameEn} / ${m.nameAr} | Price: ${m.price} USD | Category: ${m.category}\n`;
+        msg += `ID: ${m.id} | ${m.nameEn} / ${m.nameAr} | Price: ${m.price} USD | Category: ${m.category} | Type: ${m.type}\n`;
       }
       const keyboard = {
         inline_keyboard: [
@@ -1076,18 +1168,64 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    if (data === 'admin_backup' && isAdmin(userId)) {
-      const backup = await backupDatabase();
-      await bot.sendDocument(userId, Buffer.from(backup), { filename: 'backup.json', caption: 'Database backup' });
-      await bot.sendMessage(userId, await getText(userId, 'backupSuccess'));
+    if (data === 'admin_manage_redeem_services' && isAdmin(userId)) {
+      await showRedeemServicesAdmin(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
 
-    if (data === 'admin_export_stats' && isAdmin(userId)) {
-      const csv = await exportStatsCSV();
-      await bot.sendDocument(userId, Buffer.from(csv), { filename: 'stats.csv', caption: 'Statistics export' });
-      await bot.sendMessage(userId, await getText(userId, 'statsExported'));
+    if (data === 'admin_add_redeem_service' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'add_redeem_service', step: 'nameEn' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'redeemServiceNameEn'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_delete_redeem_service' && isAdmin(userId)) {
+      const services = await RedeemService.findAll();
+      const buttons = services.map(s => ([{ text: `${s.nameEn} (ID: ${s.id})`, callback_data: `delete_redeem_service_${s.id}` }]));
+      buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin_manage_redeem_services' }]);
+      await bot.sendMessage(userId, 'Select service to delete:', { reply_markup: { inline_keyboard: buttons } });
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data.startsWith('delete_redeem_service_') && isAdmin(userId)) {
+      const serviceId = parseInt(data.split('_')[3]);
+      await RedeemService.destroy({ where: { id: serviceId } });
+      await bot.sendMessage(userId, 'Service deleted.');
+      await showRedeemServicesAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_manage_discount_codes' && isAdmin(userId)) {
+      await showDiscountCodesAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_add_discount_code' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'add_discount_code', step: 'code' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterDiscountCodeValue'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_delete_discount_code' && isAdmin(userId)) {
+      const codes = await DiscountCode.findAll();
+      const buttons = codes.map(c => ([{ text: `${c.code} (${c.discountPercent}%)`, callback_data: `delete_discount_code_${c.id}` }]));
+      buttons.push([{ text: await getText(userId, 'back'), callback_data: 'admin_manage_discount_codes' }]);
+      await bot.sendMessage(userId, 'Select discount code to delete:', { reply_markup: { inline_keyboard: buttons } });
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data.startsWith('delete_discount_code_') && isAdmin(userId)) {
+      const codeId = parseInt(data.split('_')[3]);
+      await DiscountCode.destroy({ where: { id: codeId } });
+      await bot.sendMessage(userId, await getText(userId, 'discountCodeDeleted'));
+      await showDiscountCodesAdmin(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -1213,6 +1351,7 @@ bot.on('message', async (msg) => {
   const userId = msg.chat.id;
   const text = msg.text;
   const photo = msg.photo;
+  const video = msg.video;
 
   try {
     const user = await User.findByPk(userId);
@@ -1274,10 +1413,37 @@ bot.on('message', async (msg) => {
             await bot.sendMessage(userId, '❌ Invalid price');
             return;
           }
+          await User.update({ state: JSON.stringify({ ...state, price, step: 'type' }) }, { where: { id: userId } });
+          const keyboard = {
+            inline_keyboard: [
+              [{ text: await getText(userId, 'typeSingle'), callback_data: 'merchant_type_single' }],
+              [{ text: await getText(userId, 'typeBulk'), callback_data: 'merchant_type_bulk' }]
+            ]
+          };
+          await bot.sendMessage(userId, await getText(userId, 'askMerchantType'), { reply_markup: keyboard });
+          return;
+        } else if (state.step === 'type') {
+          const merchantType = state.selectedType;
+          await User.update({ state: JSON.stringify({ ...state, type: merchantType, step: 'description' }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'askDescription'));
+          return;
+        } else if (state.step === 'description') {
+          let description = null;
+          if (text === '/skip') {
+            description = null;
+          } else if (text) {
+            description = { type: 'text', content: text };
+          } else if (photo) {
+            description = { type: 'photo', fileId: photo[photo.length - 1].file_id };
+          } else if (video) {
+            description = { type: 'video', fileId: video.file_id };
+          }
           const merchant = await Merchant.create({
             nameEn: state.nameEn,
             nameAr: state.nameAr,
-            price
+            price: state.price,
+            type: state.type,
+            description
           });
           await bot.sendMessage(userId, await getText(userId, 'merchantCreated', { id: merchant.id }));
           await User.update({ state: null }, { where: { id: userId } });
@@ -1300,10 +1466,32 @@ bot.on('message', async (msg) => {
       }
 
       if (state.action === 'add_codes') {
-        const codes = text.split(/\s+/).filter(c => c.trim().length > 0);
-        const merchantId = state.merchantId;
-        const bulk = codes.map(value => ({ value, merchantId, isUsed: false }));
-        await Code.bulkCreate(bulk);
+        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+        const merchant = await Merchant.findByPk(state.merchantId);
+        if (!merchant) {
+          await bot.sendMessage(userId, 'Merchant not found');
+          await User.update({ state: null }, { where: { id: userId } });
+          return;
+        }
+        if (merchant.type === 'single') {
+          const codes = lines.map(value => ({ value, merchantId: merchant.id, isUsed: false }));
+          await Code.bulkCreate(codes);
+        } else { // bulk
+          if (lines.length % 2 !== 0) {
+            await bot.sendMessage(userId, '❌ Bulk codes must be sent as pairs (email and password on separate lines). Please send an even number of lines.');
+            return;
+          }
+          const pairs = [];
+          for (let i = 0; i < lines.length; i += 2) {
+            pairs.push({
+              value: lines[i],
+              extra: lines[i+1],
+              merchantId: merchant.id,
+              isUsed: false
+            });
+          }
+          await Code.bulkCreate(pairs);
+        }
         await bot.sendMessage(userId, await getText(userId, 'codesAdded'));
         await User.update({ state: null }, { where: { id: userId } });
         await showAdminPanel(userId);
@@ -1432,8 +1620,85 @@ bot.on('message', async (msg) => {
         await showAdminPanel(userId);
         return;
       }
+
+      if (state.action === 'add_redeem_service') {
+        if (state.step === 'nameEn') {
+          await User.update({ state: JSON.stringify({ ...state, nameEn: text, step: 'nameAr' }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'redeemServiceNameAr'));
+          return;
+        } else if (state.step === 'nameAr') {
+          await User.update({ state: JSON.stringify({ ...state, nameAr: text, step: 'merchantDictId' }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'redeemServiceMerchantId'));
+          return;
+        } else if (state.step === 'merchantDictId') {
+          await User.update({ state: JSON.stringify({ ...state, merchantDictId: text, step: 'platformId' }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'redeemServicePlatformId'));
+          return;
+        } else if (state.step === 'platformId') {
+          const platformId = text || '1';
+          await RedeemService.create({
+            nameEn: state.nameEn,
+            nameAr: state.nameAr,
+            merchantDictId: state.merchantDictId,
+            platformId
+          });
+          await bot.sendMessage(userId, await getText(userId, 'redeemServiceAdded'));
+          await User.update({ state: null }, { where: { id: userId } });
+          await showRedeemServicesAdmin(userId);
+          return;
+        }
+      }
+
+      if (state.action === 'add_discount_code') {
+        if (state.step === 'code') {
+          await User.update({ state: JSON.stringify({ ...state, code: text, step: 'percent' }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'enterDiscountPercent'));
+          return;
+        } else if (state.step === 'percent') {
+          const percent = parseInt(text);
+          if (isNaN(percent) || percent < 0 || percent > 100) {
+            await bot.sendMessage(userId, 'Invalid percentage (0-100)');
+            return;
+          }
+          await User.update({ state: JSON.stringify({ ...state, percent, step: 'validUntil' }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'enterDiscountValidUntil'));
+          return;
+        } else if (state.step === 'validUntil') {
+          let validUntil = null;
+          if (text !== '/skip') {
+            const date = new Date(text);
+            if (isNaN(date.getTime())) {
+              await bot.sendMessage(userId, 'Invalid date format. Use YYYY-MM-DD or /skip.');
+              return;
+            }
+            validUntil = date;
+          }
+          await User.update({ state: JSON.stringify({ ...state, validUntil, step: 'maxUses' }) }, { where: { id: userId } });
+          await bot.sendMessage(userId, await getText(userId, 'enterDiscountMaxUses'));
+          return;
+        } else if (state.step === 'maxUses') {
+          const maxUses = parseInt(text);
+          if (isNaN(maxUses) || maxUses < 1) {
+            await bot.sendMessage(userId, 'Invalid max uses (minimum 1)');
+            return;
+          }
+          await DiscountCode.create({
+            code: state.code,
+            discountPercent: state.percent,
+            validUntil: state.validUntil,
+            maxUses,
+            usedCount: 0,
+            createdBy: userId
+          });
+          await bot.sendMessage(userId, await getText(userId, 'discountCodeAdded'));
+          await User.update({ state: null }, { where: { id: userId } });
+          await showDiscountCodesAdmin(userId);
+          return;
+        }
+      }
     }
 
+    // معالجة الدعم
     if (state && state.action === 'support') {
       let supportText = text || '';
       let photoFileId = null;
@@ -1452,10 +1717,11 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    // معالجة كود الخصم
     if (state && state.action === 'discount') {
       const discountCode = text.trim();
       const discount = await DiscountCode.findOne({ where: { code: discountCode } });
-      if (discount && discount.validUntil > new Date() && discount.usedCount < discount.maxUses) {
+      if (discount && (discount.validUntil === null || discount.validUntil > new Date()) && discount.usedCount < discount.maxUses) {
         await User.update({ state: JSON.stringify({ action: 'discount_applied', discountCode }) }, { where: { id: userId } });
         await bot.sendMessage(userId, await getText(userId, 'discountApplied', { percent: discount.discountPercent }));
         await sendMainMenu(userId);
@@ -1467,6 +1733,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    // معالجة الشراء
     if (state && state.action === 'buy') {
       const qty = parseInt(text);
       if (isNaN(qty) || qty <= 0) {
@@ -1518,6 +1785,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    // معالجة إدخال المبلغ للشحن
     if (state && state.action === 'deposit_amount') {
       const amount = parseFloat(text);
       if (isNaN(amount) || amount <= 0) {
@@ -1529,6 +1797,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
+    // معالجة إرسال TXID أو صورة الدفع للشحن
     if (state && state.action === 'deposit_tx') {
       const { methodId, amount } = state;
       const method = await PaymentMethod.findByPk(methodId);
@@ -1561,11 +1830,19 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    if (state && state.action === 'redeem') {
-      const merchantId = state.merchantId;
+    // معالجة الاسترداد (خدمات الاسترداد)
+    if (state && state.action === 'redeem_via_service') {
+      const serviceId = state.serviceId;
+      const service = await RedeemService.findByPk(serviceId);
+      if (!service) {
+        await bot.sendMessage(userId, 'Service not found');
+        await sendMainMenu(userId);
+        await User.update({ state: null }, { where: { id: userId } });
+        return;
+      }
       const cardCode = text.trim();
       const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
-      const result = await redeemCard(cardCode, merchantId);
+      const result = await redeemCard(cardCode, service.merchantDictId, service.platformId);
       await bot.deleteMessage(userId, waitingMsg.message_id);
       if (result.success) {
         const cardDetails = formatCardDetails(result.data);
@@ -1591,8 +1868,8 @@ bot.on('message', async (msg) => {
 app.post('/api/code', async (req, res) => {
   try {
     const { token, card_key, merchant_dict_id, platform_id } = req.body;
-    const hasCodePerm = await checkBotPermission(token, 'code');
-    if (!hasCodePerm) {
+    const botService = await BotService.findOne({ where: { token, isActive: true } });
+    if (!botService || !botService.allowedActions.includes('code')) {
       return res.status(403).json({ error: 'Bot not authorized for /code' });
     }
     if (!card_key || !merchant_dict_id) {
@@ -1626,7 +1903,7 @@ setInterval(async () => {
   } catch (err) {
     console.error('Error cleaning expired codes:', err);
   }
-}, 24 * 60 * 60 * 1000); // كل 24 ساعة
+}, 24 * 60 * 60 * 1000);
 
 // ========================
 // 10. تشغيل الخادم ومزامنة قاعدة البيانات
@@ -1639,4 +1916,25 @@ sequelize.sync({ alter: true }).then(async () => {
 }).catch(err => {
   console.error('Database error:', err);
   process.exit(1);
+});
+
+// ========================
+// 11. معالجة اختيار نوع التاجر عبر callback
+// ========================
+bot.on('callback_query', async (query) => {
+  const data = query.data;
+  if (data === 'merchant_type_single' || data === 'merchant_type_bulk') {
+    const userId = query.message.chat.id;
+    const user = await User.findByPk(userId);
+    if (user && user.state) {
+      let state = JSON.parse(user.state);
+      if (state.action === 'add_merchant' && state.step === 'type') {
+        const selectedType = data === 'merchant_type_single' ? 'single' : 'bulk';
+        await User.update({ state: JSON.stringify({ ...state, selectedType, step: 'description' }) }, { where: { id: userId } });
+        await bot.sendMessage(userId, await getText(userId, 'askDescription'));
+        await bot.answerCallbackQuery(query.id);
+        return;
+      }
+    }
+  }
 });
