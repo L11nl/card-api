@@ -33,7 +33,7 @@ const sequelize = new Sequelize(DATABASE_URL, {
   pool: { max: 10, min: 0, acquire: 30000, idle: 10000 }
 });
 
-// النماذج (Models) - الحالية + إضافة DepositConfig
+// النماذج (Models)
 const User = sequelize.define('User', {
   id: { type: DataTypes.BIGINT, primaryKey: true },
   lang: { type: DataTypes.STRING(2), defaultValue: 'en' },
@@ -91,7 +91,7 @@ const BalanceTransaction = sequelize.define('BalanceTransaction', {
   paymentMethodId: { type: DataTypes.INTEGER, references: { model: PaymentMethod, key: 'id' }, allowNull: true },
   txid: { type: DataTypes.STRING, allowNull: true },
   imageFileId: { type: DataTypes.STRING, allowNull: true },
-  caption: { type: DataTypes.TEXT, allowNull: true }, // النص المرسل مع الصورة
+  caption: { type: DataTypes.TEXT, allowNull: true },
   status: { type: DataTypes.STRING, defaultValue: 'pending' },
   adminMessageId: { type: DataTypes.BIGINT, allowNull: true },
   createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
@@ -139,13 +139,12 @@ const RedeemService = sequelize.define('RedeemService', {
   platformId: { type: DataTypes.STRING, defaultValue: '1' }
 });
 
-// **جديد: نموذج إعدادات الإيداع (عملات)**
 const DepositConfig = sequelize.define('DepositConfig', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-  currency: { type: DataTypes.STRING, allowNull: false, unique: true }, // 'USD', 'IQD'
-  rate: { type: DataTypes.FLOAT, defaultValue: 1500 }, // سعر الصرف للدينار (1 USD = rate IQD)
-  walletAddress: { type: DataTypes.STRING, allowNull: false }, // رقم المحفظة / السوبر كي
-  instructions: { type: DataTypes.TEXT, allowNull: false }, // نص التعليمات
+  currency: { type: DataTypes.STRING, allowNull: false, unique: true },
+  rate: { type: DataTypes.FLOAT, defaultValue: 1500 },
+  walletAddress: { type: DataTypes.STRING, allowNull: false },
+  instructions: { type: DataTypes.TEXT, allowNull: false },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true }
 });
 
@@ -161,7 +160,7 @@ User.hasMany(ReferralReward, { as: 'Referred', foreignKey: 'referredId' });
 DiscountCode.belongsTo(User, { as: 'creator', foreignKey: 'createdBy' });
 
 // ========================
-// 3. النصوص الافتراضية (ديناميكية) – إضافة نصوص جديدة
+// 3. النصوص الافتراضية (ديناميكية) – مع إضافة نصوص جديدة
 // ========================
 const DEFAULT_TEXTS = {
   en: {
@@ -297,12 +296,12 @@ const DEFAULT_TEXTS = {
     buttonVisibilityUpdated: '✅ Button visibility updated!',
     replyToUser: 'Reply to user {userId}:',
     replyMessage: 'Your reply from support:',
-    // جديد للإيداع
+    // إعدادات الشحن
     chooseCurrency: '💱 Choose currency for deposit:',
-    currencyIQD: '🇮🇶 Iraqi Dinar (IQD)',
-    currencyUSD: '💵 USDT (Tether)',
+    currencyIQD: 'Iraqi Dinar (IQD)',
+    currencyUSD: 'USDT (Tether)',
     enterDepositAmountUSD: '💰 Enter amount in USD:',
-    depositInstructionsUSD: '💰 Send {amount} USDT to the following address:\n\n`{address}`\n\nThen send a screenshot of the transaction with any message.\n\n{instructions}',
+    depositInstructionsUSD: '💰 Send {amount} USDT to the following address:\n\n`{address}`\n\nThen send a screenshot of the payment with any message.\n\n{instructions}',
     depositInstructionsIQD: '💰 Send {amountIQD} IQD (≈ {amountUSD} USD at rate {rate} IQD/USD) to the following SuperKey:\n\n`{address}`\n\nThen send a screenshot of the payment with any message.\n\n{instructions}',
     depositAwaitingProof: '📸 Please send the payment screenshot (photo) with any message (optional).',
     depositProofReceived: '✅ Deposit proof received! Admin will review it shortly.',
@@ -317,7 +316,19 @@ const DEFAULT_TEXTS = {
     rateSet: '✅ Exchange rate updated!',
     enterNewRate: 'Send new exchange rate (1 USD = ? IQD):',
     enterWalletAddress: 'Send wallet address / SuperKey:',
-    enterInstructions: 'Send deposit instructions (text):'
+    enterInstructions: 'Send deposit instructions (text):',
+    editCurrencyNames: '✏️ Edit Currency Names',
+    editUSDName: 'Edit USDT name',
+    editIQDName: 'Edit IQD name',
+    editDepositInstructionsUSD: 'Edit USDT instructions',
+    editDepositInstructionsIQD: 'Edit IQD instructions',
+    currency_usd_name: 'USDT (Tether)',
+    currency_iqd_name: 'Iraqi Dinar (IQD)',
+    enterNewCurrencyName: 'Send new currency name:',
+    currencyNameUpdated: '✅ Currency name updated!',
+    editDepositInstructions: '📝 Edit Deposit Instructions',
+    editUSDInstructions: 'Edit USDT instructions',
+    editIQDInstructions: 'Edit IQD instructions'
   },
   ar: {
     start: '🌍 اختر اللغة',
@@ -452,10 +463,10 @@ const DEFAULT_TEXTS = {
     buttonVisibilityUpdated: '✅ تم تحديث ظهور الأزرار!',
     replyToUser: 'رد على المستخدم {userId}:',
     replyMessage: 'ردك من الدعم الفني:',
-    // جديد للإيداع
+    // إعدادات الشحن بالعربية
     chooseCurrency: '💱 اختر العملة للشحن:',
-    currencyIQD: '🇮🇶 دينار عراقي (IQD)',
-    currencyUSD: '💵 USDT (تيثر)',
+    currencyIQD: 'دينار عراقي (IQD)',
+    currencyUSD: 'تيثر USDT',
     enterDepositAmountUSD: '💰 أدخل المبلغ بالدولار:',
     depositInstructionsUSD: '💰 قم بإرسال {amount} USDT إلى العنوان التالي:\n\n`{address}`\n\nثم أرسل صورة التحويل مع أي رسالة.\n\n{instructions}',
     depositInstructionsIQD: '💰 قم بإرسال {amountIQD} دينار عراقي (≈ {amountUSD} دولار بسعر صرف {rate} دينار/دولار) إلى السوبر كي التالي:\n\n`{address}`\n\nثم أرسل صورة التحويل مع أي رسالة.\n\n{instructions}',
@@ -472,11 +483,23 @@ const DEFAULT_TEXTS = {
     rateSet: '✅ تم تحديث سعر الصرف!',
     enterNewRate: 'أرسل سعر الصرف الجديد (1 دولار = ? دينار):',
     enterWalletAddress: 'أرسل عنوان المحفظة / السوبر كي:',
-    enterInstructions: 'أرسل تعليمات الدفع (نص):'
+    enterInstructions: 'أرسل تعليمات الدفع (نص):',
+    editCurrencyNames: '✏️ تعديل أسماء العملات',
+    editUSDName: 'تعديل اسم USDT',
+    editIQDName: 'تعديل اسم الدينار العراقي',
+    editDepositInstructionsUSD: 'تعديل تعليمات USDT',
+    editDepositInstructionsIQD: 'تعديل تعليمات الدينار',
+    currency_usd_name: 'تيثر USDT',
+    currency_iqd_name: 'دينار عراقي (IQD)',
+    enterNewCurrencyName: 'أرسل الاسم الجديد للعملة:',
+    currencyNameUpdated: '✅ تم تحديث اسم العملة!',
+    editDepositInstructions: '📝 تعديل تعليمات الدفع',
+    editUSDInstructions: 'تعديل تعليمات USDT',
+    editIQDInstructions: 'تعديل تعليمات الدينار'
   }
 };
 
-// دوال مساعدة للنصوص (كما هي)
+// دوال مساعدة للنصوص
 async function getText(userId, key, replacements = {}) {
   try {
     const user = await User.findByPk(userId);
@@ -579,7 +602,7 @@ async function showMenuButtonsAdmin(userId) {
     { id: 'myPurchases', name: await getText(userId, 'myPurchases') },
     { id: 'support', name: await getText(userId, 'support') }
   ];
-  let msg = '🎛️ *Manage Menu Buttons*\nToggle each button to show/hide:\n\n';
+  let msg = await getText(userId, 'manageMenuButtons') + '\n\n';
   const keyboard = [];
   for (const btn of buttons) {
     const status = visibility[btn.id] !== false;
@@ -608,7 +631,6 @@ async function toggleMenuButton(buttonId, newState, adminId) {
 async function getDepositConfig(currency) {
   let config = await DepositConfig.findOne({ where: { currency } });
   if (!config) {
-    // إنشاء إعدادات افتراضية
     if (currency === 'USD') {
       config = await DepositConfig.create({
         currency: 'USD',
@@ -637,28 +659,67 @@ async function updateDepositConfig(currency, field, value) {
   return config;
 }
 
-// دوال عرض إعدادات الشحن للأدمن
+async function getCurrencyName(userId, currency) {
+  if (currency === 'USD') {
+    return await getText(userId, 'currency_usd_name');
+  } else {
+    return await getText(userId, 'currency_iqd_name');
+  }
+}
+
 async function showDepositSettingsAdmin(userId) {
   const usdConfig = await getDepositConfig('USD');
   const iqdConfig = await getDepositConfig('IQD');
-  const msg = `💱 *Deposit Settings*\n\n` +
-              `🇺🇸 USDT:\n` +
+  const usdName = await getText(userId, 'currency_usd_name');
+  const iqdName = await getText(userId, 'currency_iqd_name');
+  const msg = `💱 *${await getText(userId, 'manageDepositSettings')}*\n\n` +
+              `${usdName}:\n` +
               `  Address: \`${usdConfig.walletAddress}\`\n` +
               `  Instructions: ${usdConfig.instructions}\n\n` +
-              `🇮🇶 IQD:\n` +
+              `${iqdName}:\n` +
               `  Rate: ${iqdConfig.rate} IQD/USD\n` +
               `  SuperKey: \`${iqdConfig.walletAddress}\`\n` +
               `  Instructions: ${iqdConfig.instructions}\n`;
   const keyboard = {
     inline_keyboard: [
-      [{ text: '💰 Set IQD Rate', callback_data: 'admin_set_iqd_rate' }],
-      [{ text: '🏦 Set USDT Wallet', callback_data: 'admin_set_usdt_wallet' }],
-      [{ text: '🏦 Set IQD SuperKey', callback_data: 'admin_set_iqd_wallet' }],
-      [{ text: '📝 Set Deposit Instructions', callback_data: 'admin_set_deposit_instructions' }],
-      [{ text: '🔙 Back', callback_data: 'admin' }]
+      [{ text: await getText(userId, 'setIQDRate'), callback_data: 'admin_set_iqd_rate' }],
+      [{ text: await getText(userId, 'setUSDTWallet'), callback_data: 'admin_set_usdt_wallet' }],
+      [{ text: await getText(userId, 'setIQDWallet'), callback_data: 'admin_set_iqd_wallet' }],
+      [{ text: await getText(userId, 'editCurrencyNames'), callback_data: 'admin_edit_currency_names' }],
+      [{ text: await getText(userId, 'editDepositInstructions'), callback_data: 'admin_edit_deposit_instructions' }],
+      [{ text: await getText(userId, 'back'), callback_data: 'admin' }]
     ]
   };
   await bot.sendMessage(userId, msg, { parse_mode: 'Markdown', reply_markup: keyboard });
+}
+
+async function showCurrencyNamesEdit(userId) {
+  const usdName = await getText(userId, 'currency_usd_name');
+  const iqdName = await getText(userId, 'currency_iqd_name');
+  const msg = `✏️ *${await getText(userId, 'editCurrencyNames')}*\n\n` +
+              `Current USDT name: ${usdName}\n` +
+              `Current IQD name: ${iqdName}\n\n` +
+              `Choose which to edit:`;
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: `✏️ ${await getText(userId, 'editUSDName')}`, callback_data: 'admin_edit_usd_name' }],
+      [{ text: `✏️ ${await getText(userId, 'editIQDName')}`, callback_data: 'admin_edit_iqd_name' }],
+      [{ text: await getText(userId, 'back'), callback_data: 'admin_manage_deposit_settings' }]
+    ]
+  };
+  await bot.sendMessage(userId, msg, { reply_markup: keyboard });
+}
+
+async function showDepositInstructionsEdit(userId) {
+  const msg = await getText(userId, 'editDepositInstructions');
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: await getText(userId, 'editUSDInstructions'), callback_data: 'admin_edit_usd_instructions' }],
+      [{ text: await getText(userId, 'editIQDInstructions'), callback_data: 'admin_edit_iqd_instructions' }],
+      [{ text: await getText(userId, 'back'), callback_data: 'admin_manage_deposit_settings' }]
+    ]
+  };
+  await bot.sendMessage(userId, msg, { reply_markup: keyboard });
 }
 
 // ========================
@@ -716,10 +777,12 @@ async function showAdminPanel(userId) {
 
 async function showCurrencyOptions(userId) {
   const chooseCurrencyText = await getText(userId, 'chooseCurrency');
+  const currencyUSDName = await getText(userId, 'currency_usd_name');
+  const currencyIQDName = await getText(userId, 'currency_iqd_name');
   const keyboard = {
     inline_keyboard: [
-      [{ text: await getText(userId, 'currencyIQD'), callback_data: 'deposit_currency_iqd' }],
-      [{ text: await getText(userId, 'currencyUSD'), callback_data: 'deposit_currency_usd' }],
+      [{ text: currencyIQDName, callback_data: 'deposit_currency_iqd' }],
+      [{ text: currencyUSDName, callback_data: 'deposit_currency_usd' }],
       [{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]
     ]
   };
@@ -784,7 +847,6 @@ async function showMerchantsForRedeem(userId) {
 }
 
 async function showPaymentMethodsForDeposit(userId, amount, currency) {
-  // هذه الدالة أصبحت خاصة بالتعليمات بعد إدخال المبلغ والعملة
   const config = await getDepositConfig(currency);
   const lang = (await User.findByPk(userId)).lang;
   if (currency === 'USD') {
@@ -805,10 +867,8 @@ async function showPaymentMethodsForDeposit(userId, amount, currency) {
     });
     await bot.sendMessage(userId, msg, { parse_mode: 'Markdown' });
   }
-  // بعد إرسال التعليمات، ننتظر صورة أو رسالة
+  // ننتظر الصورة مباشرة دون إرسال رسالة إضافية
   await User.update({ state: JSON.stringify({ action: 'deposit_awaiting_proof', amount, currency }) }, { where: { id: userId } });
-  const awaitingText = await getText(userId, 'depositAwaitingProof');
-  await bot.sendMessage(userId, awaitingText);
 }
 
 async function showBotsList(userId) {
@@ -990,7 +1050,6 @@ async function processPurchase(userId, merchantId, quantity, discountCode = null
 }
 
 async function requestDeposit(userId, amount, currency, message, imageFileId = null) {
-  const config = await getDepositConfig(currency);
   const deposit = await BalanceTransaction.create({
     userId,
     amount,
@@ -1000,7 +1059,6 @@ async function requestDeposit(userId, amount, currency, message, imageFileId = n
     caption: message,
     txid: currency // تخزين العملة مؤقتاً في txid
   });
-  // إرسال إشعار للأدمن
   const notifText = await getText(ADMIN_ID, 'depositNotification', {
     userId,
     amount,
@@ -1013,7 +1071,7 @@ async function requestDeposit(userId, amount, currency, message, imageFileId = n
   } else {
     await bot.sendMessage(ADMIN_ID, notifText);
   }
-  const adminMsg = await bot.sendMessage(ADMIN_ID, 'Approve or reject:', {
+  const adminMsg = await bot.sendMessage(ADMIN_ID, await getText(ADMIN_ID, 'approve') + ' / ' + await getText(ADMIN_ID, 'reject'), {
     reply_markup: {
       inline_keyboard: [
         [{ text: await getText(ADMIN_ID, 'approve'), callback_data: `approve_deposit_${deposit.id}` }],
@@ -1128,7 +1186,6 @@ bot.on('callback_query', async (query) => {
     // رد المستخدم على رسالة الدعم (زر "رد على الدعم")
     if (data.startsWith('support_reply_user_')) {
       const adminId = parseInt(data.split('_')[3]);
-      // تخزين أن المستخدم يريد الرد على هذا الأدمن
       await User.update({ state: JSON.stringify({ action: 'support_reply_user', targetAdminId: adminId }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'sendReply'));
       await bot.answerCallbackQuery(query.id);
@@ -1395,7 +1452,7 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // طرق الدفع (للأدمن) – نضيف إعدادات الشحن هنا
+    // طرق الدفع (للأدمن)
     if (data === 'admin_payment_methods' && isAdmin(userId)) {
       const methods = await PaymentMethod.findAll();
       let msg = '💳 Payment Methods:\n';
@@ -1450,9 +1507,47 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // تعديل تعليمات الدفع
-    if (data === 'admin_set_deposit_instructions' && isAdmin(userId)) {
-      await User.update({ state: JSON.stringify({ action: 'set_deposit_instructions' }) }, { where: { id: userId } });
+    // تعديل تعليمات الدفع (الانتقال إلى قائمة الاختيار)
+    if (data === 'admin_edit_deposit_instructions' && isAdmin(userId)) {
+      await showDepositInstructionsEdit(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل أسماء العملات
+    if (data === 'admin_edit_currency_names' && isAdmin(userId)) {
+      await showCurrencyNamesEdit(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل اسم USDT
+    if (data === 'admin_edit_usd_name' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'edit_currency_name', currency: 'USD' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterNewCurrencyName'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل اسم الدينار
+    if (data === 'admin_edit_iqd_name' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'edit_currency_name', currency: 'IQD' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterNewCurrencyName'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل تعليمات USDT
+    if (data === 'admin_edit_usd_instructions' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'edit_deposit_instructions', currency: 'USD' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterInstructions'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل تعليمات الدينار
+    if (data === 'admin_edit_iqd_instructions' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'edit_deposit_instructions', currency: 'IQD' }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'enterInstructions'));
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1803,11 +1898,10 @@ bot.on('message', async (msg) => {
       } else {
         await bot.sendMessage(targetUserId, supportReplyText);
       }
-      // إضافة زر رد للمستخدم
       const replyButton = {
-        inline_keyboard: [[{ text: '📩 Reply to Support', callback_data: `support_reply_user_${userId}` }]]
+        inline_keyboard: [[{ text: await getText(targetUserId, 'replyToSupport'), callback_data: `support_reply_user_${userId}` }]]
       };
-      await bot.sendMessage(targetUserId, 'You can reply to this message using the button below.', { reply_markup: replyButton });
+      await bot.sendMessage(targetUserId, await getText(targetUserId, 'replyToSupport'), { reply_markup: replyButton });
       await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
       await User.update({ state: null }, { where: { id: userId } });
       return;
@@ -2197,11 +2291,21 @@ bot.on('message', async (msg) => {
         await showDepositSettingsAdmin(userId);
         return;
       }
-      if (state.action === 'set_deposit_instructions') {
-        // نحدد اللغة بناءً على لغة الأدمن
-        const adminLang = user.lang;
-        await updateDepositConfig('USD', 'instructions', text);
-        await updateDepositConfig('IQD', 'instructions', text);
+      if (state.action === 'edit_currency_name') {
+        const currency = state.currency;
+        const newName = text;
+        const key = currency === 'USD' ? 'currency_usd_name' : 'currency_iqd_name';
+        const lang = user.lang;
+        await Setting.upsert({ key, lang, value: newName });
+        await bot.sendMessage(userId, await getText(userId, 'currencyNameUpdated'));
+        await User.update({ state: null }, { where: { id: userId } });
+        await showDepositSettingsAdmin(userId);
+        return;
+      }
+      if (state.action === 'edit_deposit_instructions') {
+        const currency = state.currency;
+        const newInstructions = text;
+        await updateDepositConfig(currency, 'instructions', newInstructions);
         await bot.sendMessage(userId, await getText(userId, 'instructionsSet'));
         await User.update({ state: null }, { where: { id: userId } });
         await showDepositSettingsAdmin(userId);
@@ -2220,9 +2324,8 @@ bot.on('message', async (msg) => {
       } else {
         await bot.sendMessage(ADMIN_ID, notifText);
       }
-      // إضافة زر رد للمشرف
       const replyButton = {
-        inline_keyboard: [[{ text: 'Reply', callback_data: `support_reply_${userId}` }]]
+        inline_keyboard: [[{ text: await getText(ADMIN_ID, 'replyToSupport'), callback_data: `support_reply_${userId}` }]]
       };
       await bot.sendMessage(ADMIN_ID, await getText(ADMIN_ID, 'replyToSupport'), { reply_markup: replyButton });
       await bot.sendMessage(userId, await getText(userId, 'supportMessageSent'));
@@ -2307,7 +2410,7 @@ bot.on('message', async (msg) => {
       }
       const currency = state.currency;
       await showPaymentMethodsForDeposit(userId, amount, currency);
-      await User.update({ state: null }, { where: { id: userId } }); // سننتظر الصورة في الحالة التالية
+      await User.update({ state: null }, { where: { id: userId } }); // ننتظر الصورة في الحالة التالية
       return;
     }
 
@@ -2320,7 +2423,7 @@ bot.on('message', async (msg) => {
       if (photo) {
         imageFileId = photo[photo.length - 1].file_id;
       } else {
-        await bot.sendMessage(userId, await getText(userId, 'sendImage'));
+        // إذا لم تكن صورة، لا نرد (لأن التعليمات قالت أرسل صورة)
         return;
       }
       await requestDeposit(userId, amount, currency, caption, imageFileId);
