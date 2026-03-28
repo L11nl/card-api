@@ -33,7 +33,7 @@ const sequelize = new Sequelize(DATABASE_URL, {
   pool: { max: 10, min: 0, acquire: 30000, idle: 10000 }
 });
 
-// النماذج (Models)
+// النماذج (Models) - الحالية + إضافة DepositConfig
 const User = sequelize.define('User', {
   id: { type: DataTypes.BIGINT, primaryKey: true },
   lang: { type: DataTypes.STRING(2), defaultValue: 'en' },
@@ -56,7 +56,7 @@ const Merchant = sequelize.define('Merchant', {
   nameAr: { type: DataTypes.STRING, allowNull: false },
   price: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 0 },
   category: { type: DataTypes.STRING, defaultValue: 'general' },
-  type: { type: DataTypes.STRING, defaultValue: 'single' }, // 'single' or 'bulk'
+  type: { type: DataTypes.STRING, defaultValue: 'single' },
   description: { type: DataTypes.JSONB, allowNull: true }
 });
 
@@ -91,6 +91,7 @@ const BalanceTransaction = sequelize.define('BalanceTransaction', {
   paymentMethodId: { type: DataTypes.INTEGER, references: { model: PaymentMethod, key: 'id' }, allowNull: true },
   txid: { type: DataTypes.STRING, allowNull: true },
   imageFileId: { type: DataTypes.STRING, allowNull: true },
+  caption: { type: DataTypes.TEXT, allowNull: true }, // النص المرسل مع الصورة
   status: { type: DataTypes.STRING, defaultValue: 'pending' },
   adminMessageId: { type: DataTypes.BIGINT, allowNull: true },
   createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
@@ -138,6 +139,16 @@ const RedeemService = sequelize.define('RedeemService', {
   platformId: { type: DataTypes.STRING, defaultValue: '1' }
 });
 
+// **جديد: نموذج إعدادات الإيداع (عملات)**
+const DepositConfig = sequelize.define('DepositConfig', {
+  id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  currency: { type: DataTypes.STRING, allowNull: false, unique: true }, // 'USD', 'IQD'
+  rate: { type: DataTypes.FLOAT, defaultValue: 1500 }, // سعر الصرف للدينار (1 USD = rate IQD)
+  walletAddress: { type: DataTypes.STRING, allowNull: false }, // رقم المحفظة / السوبر كي
+  instructions: { type: DataTypes.TEXT, allowNull: false }, // نص التعليمات
+  isActive: { type: DataTypes.BOOLEAN, defaultValue: true }
+});
+
 // العلاقات
 Merchant.hasMany(Code, { foreignKey: 'merchantId' });
 Code.belongsTo(Merchant);
@@ -150,7 +161,7 @@ User.hasMany(ReferralReward, { as: 'Referred', foreignKey: 'referredId' });
 DiscountCode.belongsTo(User, { as: 'creator', foreignKey: 'createdBy' });
 
 // ========================
-// 3. النصوص الافتراضية (ديناميكية)
+// 3. النصوص الافتراضية (ديناميكية) – إضافة نصوص جديدة
 // ========================
 const DEFAULT_TEXTS = {
   en: {
@@ -218,7 +229,7 @@ const DEFAULT_TEXTS = {
     botStatsText: '📊 Bot stats for {name}:\n',
     permissionsUpdated: '✅ Bot permissions updated!',
     depositRequestPending: '📝 Your deposit request has been sent to admin. Please wait for approval.',
-    depositNotification: '💳 New deposit request from user {userId}\nAmount: {amount} USD\nPayment Method: {method}\n\n',
+    depositNotification: '💳 New deposit request from user {userId}\nAmount: {amount} {currency}\nPayment Method: {method}\n\nMessage: {message}',
     approve: '✅ Approve',
     reject: '❌ Reject',
     supportMessageSent: '📨 Your message has been sent to support. You will receive a reply soon.',
@@ -285,7 +296,28 @@ const DEFAULT_TEXTS = {
     show: 'Show',
     buttonVisibilityUpdated: '✅ Button visibility updated!',
     replyToUser: 'Reply to user {userId}:',
-    replyMessage: 'Your reply from support:'
+    replyMessage: 'Your reply from support:',
+    // جديد للإيداع
+    chooseCurrency: '💱 Choose currency for deposit:',
+    currencyIQD: '🇮🇶 Iraqi Dinar (IQD)',
+    currencyUSD: '💵 USDT (Tether)',
+    enterDepositAmountUSD: '💰 Enter amount in USD:',
+    depositInstructionsUSD: '💰 Send {amount} USDT to the following address:\n\n`{address}`\n\nThen send a screenshot of the transaction with any message.\n\n{instructions}',
+    depositInstructionsIQD: '💰 Send {amountIQD} IQD (≈ {amountUSD} USD at rate {rate} IQD/USD) to the following SuperKey:\n\n`{address}`\n\nThen send a screenshot of the payment with any message.\n\n{instructions}',
+    depositAwaitingProof: '📸 Please send the payment screenshot (photo) with any message (optional).',
+    depositProofReceived: '✅ Deposit proof received! Admin will review it shortly.',
+    manageDepositSettings: '💱 Manage Deposit Settings',
+    setIQDRate: '💰 Set IQD Exchange Rate',
+    setUSDTWallet: '🏦 Set USDT Wallet Address',
+    setIQDWallet: '🏦 Set IQD SuperKey',
+    setDepositInstructions: '📝 Set Deposit Instructions',
+    currentRate: 'Current IQD rate: {rate} IQD per 1 USD',
+    walletSet: '✅ Wallet address updated!',
+    instructionsSet: '✅ Instructions updated!',
+    rateSet: '✅ Exchange rate updated!',
+    enterNewRate: 'Send new exchange rate (1 USD = ? IQD):',
+    enterWalletAddress: 'Send wallet address / SuperKey:',
+    enterInstructions: 'Send deposit instructions (text):'
   },
   ar: {
     start: '🌍 اختر اللغة',
@@ -352,7 +384,7 @@ const DEFAULT_TEXTS = {
     botStatsText: '📊 إحصائيات البوت {name}:\n',
     permissionsUpdated: '✅ تم تحديث صلاحيات البوت!',
     depositRequestPending: '📝 تم إرسال طلب الشحن إلى الأدمن. يرجى الانتظار للموافقة.',
-    depositNotification: '💳 طلب شحن جديد من المستخدم {userId}\nالمبلغ: {amount} دولار\nطريقة الدفع: {method}\n\n',
+    depositNotification: '💳 طلب شحن جديد من المستخدم {userId}\nالمبلغ: {amount} {currency}\nطريقة الدفع: {method}\n\nالرسالة: {message}',
     approve: '✅ موافقة',
     reject: '❌ رفض',
     supportMessageSent: '📨 تم إرسال رسالتك إلى الدعم الفني. ستتلقى رداً قريباً.',
@@ -419,11 +451,32 @@ const DEFAULT_TEXTS = {
     show: 'إظهار',
     buttonVisibilityUpdated: '✅ تم تحديث ظهور الأزرار!',
     replyToUser: 'رد على المستخدم {userId}:',
-    replyMessage: 'ردك من الدعم الفني:'
+    replyMessage: 'ردك من الدعم الفني:',
+    // جديد للإيداع
+    chooseCurrency: '💱 اختر العملة للشحن:',
+    currencyIQD: '🇮🇶 دينار عراقي (IQD)',
+    currencyUSD: '💵 USDT (تيثر)',
+    enterDepositAmountUSD: '💰 أدخل المبلغ بالدولار:',
+    depositInstructionsUSD: '💰 قم بإرسال {amount} USDT إلى العنوان التالي:\n\n`{address}`\n\nثم أرسل صورة التحويل مع أي رسالة.\n\n{instructions}',
+    depositInstructionsIQD: '💰 قم بإرسال {amountIQD} دينار عراقي (≈ {amountUSD} دولار بسعر صرف {rate} دينار/دولار) إلى السوبر كي التالي:\n\n`{address}`\n\nثم أرسل صورة التحويل مع أي رسالة.\n\n{instructions}',
+    depositAwaitingProof: '📸 يرجى إرسال صورة إثبات الدفع (صورة) مع أي رسالة (اختياري).',
+    depositProofReceived: '✅ تم استلام إثبات الدفع! سيقوم الأدمن بمراجعته قريباً.',
+    manageDepositSettings: '💱 إعدادات الشحن',
+    setIQDRate: '💰 تعيين سعر صرف الدينار',
+    setUSDTWallet: '🏦 تعيين عنوان محفظة USDT',
+    setIQDWallet: '🏦 تعيين السوبر كي للدينار',
+    setDepositInstructions: '📝 تعيين تعليمات الدفع',
+    currentRate: 'سعر الصرف الحالي: {rate} دينار لكل 1 دولار',
+    walletSet: '✅ تم تحديث عنوان المحفظة!',
+    instructionsSet: '✅ تم تحديث التعليمات!',
+    rateSet: '✅ تم تحديث سعر الصرف!',
+    enterNewRate: 'أرسل سعر الصرف الجديد (1 دولار = ? دينار):',
+    enterWalletAddress: 'أرسل عنوان المحفظة / السوبر كي:',
+    enterInstructions: 'أرسل تعليمات الدفع (نص):'
   }
 };
 
-// دوال مساعدة للنصوص
+// دوال مساعدة للنصوص (كما هي)
 async function getText(userId, key, replacements = {}) {
   try {
     const user = await User.findByPk(userId);
@@ -482,7 +535,7 @@ async function applyDiscount(userId, discountCode, totalAmount) {
 }
 
 // ========================
-// دوال إدارة الأزرار (العامة)
+// دوال إدارة الأزرار (كما هي)
 // ========================
 const DEFAULT_BUTTONS = {
   redeem: true,
@@ -550,7 +603,66 @@ async function toggleMenuButton(buttonId, newState, adminId) {
 }
 
 // ========================
-// دوال عرض القوائم
+// دوال إعدادات الشحن (جديدة)
+// ========================
+async function getDepositConfig(currency) {
+  let config = await DepositConfig.findOne({ where: { currency } });
+  if (!config) {
+    // إنشاء إعدادات افتراضية
+    if (currency === 'USD') {
+      config = await DepositConfig.create({
+        currency: 'USD',
+        rate: 1,
+        walletAddress: 'T...',
+        instructions: 'Send USDT (TRC20) to the address above.',
+        isActive: true
+      });
+    } else if (currency === 'IQD') {
+      config = await DepositConfig.create({
+        currency: 'IQD',
+        rate: 1500,
+        walletAddress: 'SuperKey...',
+        instructions: 'Send IQD to the SuperKey above.',
+        isActive: true
+      });
+    }
+  }
+  return config;
+}
+
+async function updateDepositConfig(currency, field, value) {
+  const config = await getDepositConfig(currency);
+  config[field] = value;
+  await config.save();
+  return config;
+}
+
+// دوال عرض إعدادات الشحن للأدمن
+async function showDepositSettingsAdmin(userId) {
+  const usdConfig = await getDepositConfig('USD');
+  const iqdConfig = await getDepositConfig('IQD');
+  const msg = `💱 *Deposit Settings*\n\n` +
+              `🇺🇸 USDT:\n` +
+              `  Address: \`${usdConfig.walletAddress}\`\n` +
+              `  Instructions: ${usdConfig.instructions}\n\n` +
+              `🇮🇶 IQD:\n` +
+              `  Rate: ${iqdConfig.rate} IQD/USD\n` +
+              `  SuperKey: \`${iqdConfig.walletAddress}\`\n` +
+              `  Instructions: ${iqdConfig.instructions}\n`;
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '💰 Set IQD Rate', callback_data: 'admin_set_iqd_rate' }],
+      [{ text: '🏦 Set USDT Wallet', callback_data: 'admin_set_usdt_wallet' }],
+      [{ text: '🏦 Set IQD SuperKey', callback_data: 'admin_set_iqd_wallet' }],
+      [{ text: '📝 Set Deposit Instructions', callback_data: 'admin_set_deposit_instructions' }],
+      [{ text: '🔙 Back', callback_data: 'admin' }]
+    ]
+  };
+  await bot.sendMessage(userId, msg, { parse_mode: 'Markdown', reply_markup: keyboard });
+}
+
+// ========================
+// دوال عرض القوائم (تعديل showPaymentMethodsForDeposit)
 // ========================
 async function sendMainMenu(userId) {
   const menuText = await getText(userId, 'menu');
@@ -586,6 +698,7 @@ async function showAdminPanel(userId) {
     inline_keyboard: [
       [{ text: await getText(userId, 'manageBots'), callback_data: 'admin_manage_bots' }],
       [{ text: await getText(userId, 'manageMenuButtons'), callback_data: 'admin_manage_menu_buttons' }],
+      [{ text: await getText(userId, 'manageDepositSettings'), callback_data: 'admin_manage_deposit_settings' }],
       [{ text: await getText(userId, 'addMerchant'), callback_data: 'admin_add_merchant' }],
       [{ text: await getText(userId, 'listMerchants'), callback_data: 'admin_list_merchants' }],
       [{ text: await getText(userId, 'setPrice'), callback_data: 'admin_set_price' }],
@@ -599,6 +712,18 @@ async function showAdminPanel(userId) {
     ]
   };
   await bot.sendMessage(userId, panelText, { reply_markup: keyboard });
+}
+
+async function showCurrencyOptions(userId) {
+  const chooseCurrencyText = await getText(userId, 'chooseCurrency');
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: await getText(userId, 'currencyIQD'), callback_data: 'deposit_currency_iqd' }],
+      [{ text: await getText(userId, 'currencyUSD'), callback_data: 'deposit_currency_usd' }],
+      [{ text: await getText(userId, 'back'), callback_data: 'back_to_menu' }]
+    ]
+  };
+  await bot.sendMessage(userId, chooseCurrencyText, { reply_markup: keyboard });
 }
 
 async function showMerchantsForBuy(userId) {
@@ -658,24 +783,32 @@ async function showMerchantsForRedeem(userId) {
   await bot.sendMessage(userId, chooseMerchantText, { reply_markup: { inline_keyboard: buttons } });
 }
 
-async function showPaymentMethodsForDeposit(userId, amount) {
-  const methods = await PaymentMethod.findAll({ where: { isActive: true } });
-  if (methods.length === 0) {
-    await bot.sendMessage(userId, await getText(userId, 'noPaymentMethods'));
-    return sendMainMenu(userId);
-  }
+async function showPaymentMethodsForDeposit(userId, amount, currency) {
+  // هذه الدالة أصبحت خاصة بالتعليمات بعد إدخال المبلغ والعملة
+  const config = await getDepositConfig(currency);
   const lang = (await User.findByPk(userId)).lang;
-  const buttons = [];
-  for (const m of methods) {
-    buttons.push([{
-      text: `${lang === 'en' ? m.nameEn : m.nameAr} (Min: ${m.minDeposit} / Max: ${m.maxDeposit})`,
-      callback_data: `deposit_method_${m.id}_${amount}`
-    }]);
+  if (currency === 'USD') {
+    const msg = await getText(userId, 'depositInstructionsUSD', {
+      amount,
+      address: config.walletAddress,
+      instructions: config.instructions
+    });
+    await bot.sendMessage(userId, msg, { parse_mode: 'Markdown' });
+  } else if (currency === 'IQD') {
+    const amountIQD = amount * config.rate;
+    const msg = await getText(userId, 'depositInstructionsIQD', {
+      amountUSD: amount,
+      amountIQD: amountIQD,
+      rate: config.rate,
+      address: config.walletAddress,
+      instructions: config.instructions
+    });
+    await bot.sendMessage(userId, msg, { parse_mode: 'Markdown' });
   }
-  const backText = await getText(userId, 'back');
-  buttons.push([{ text: backText, callback_data: 'back_to_menu' }]);
-  const chooseMethodText = await getText(userId, 'choosePaymentMethod');
-  await bot.sendMessage(userId, chooseMethodText, { reply_markup: { inline_keyboard: buttons } });
+  // بعد إرسال التعليمات، ننتظر صورة أو رسالة
+  await User.update({ state: JSON.stringify({ action: 'deposit_awaiting_proof', amount, currency }) }, { where: { id: userId } });
+  const awaitingText = await getText(userId, 'depositAwaitingProof');
+  await bot.sendMessage(userId, awaitingText);
 }
 
 async function showBotsList(userId) {
@@ -763,7 +896,7 @@ async function showDiscountCodesAdmin(userId) {
   await bot.sendMessage(userId, msg || await getText(userId, 'noDiscountCodes'), { reply_markup: keyboard });
 }
 
-// دوال الاسترداد
+// دوال الاسترداد (كما هي)
 async function redeemCard(cardKey, merchantDictId, platformId = '1') {
   try {
     const apiKey = process.env.NODE_CARD_API_KEY;
@@ -856,22 +989,29 @@ async function processPurchase(userId, merchantId, quantity, discountCode = null
   }
 }
 
-async function requestDeposit(userId, amount, paymentMethodId, txidOrImage, isImage = false) {
-  const method = await PaymentMethod.findByPk(paymentMethodId);
-  if (!method) return { success: false, reason: 'Payment method not found' };
+async function requestDeposit(userId, amount, currency, message, imageFileId = null) {
+  const config = await getDepositConfig(currency);
   const deposit = await BalanceTransaction.create({
     userId,
     amount,
     type: 'deposit',
-    paymentMethodId,
     status: 'pending',
-    ...(isImage ? { imageFileId: txidOrImage } : { txid: txidOrImage })
+    imageFileId: imageFileId,
+    caption: message,
+    txid: currency // تخزين العملة مؤقتاً في txid
   });
-  const notifText = await getText(ADMIN_ID, 'depositNotification', { userId, amount, method: method.nameEn });
-  if (isImage) {
-    await bot.sendPhoto(ADMIN_ID, txidOrImage, { caption: notifText });
+  // إرسال إشعار للأدمن
+  const notifText = await getText(ADMIN_ID, 'depositNotification', {
+    userId,
+    amount,
+    currency: currency === 'USD' ? 'USDT' : 'IQD',
+    method: currency === 'USD' ? 'USDT' : 'IQD',
+    message: message || 'No message'
+  });
+  if (imageFileId) {
+    await bot.sendPhoto(ADMIN_ID, imageFileId, { caption: notifText });
   } else {
-    await bot.sendMessage(ADMIN_ID, notifText + `\nTxID: ${txidOrImage}`);
+    await bot.sendMessage(ADMIN_ID, notifText);
   }
   const adminMsg = await bot.sendMessage(ADMIN_ID, 'Approve or reject:', {
     reply_markup: {
@@ -977,9 +1117,19 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // الدعم الفني
+    // الدعم الفني (مستخدم يطلب الدعم)
     if (data === 'support') {
       await User.update({ state: JSON.stringify({ action: 'support' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'sendReply'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // رد المستخدم على رسالة الدعم (زر "رد على الدعم")
+    if (data.startsWith('support_reply_user_')) {
+      const adminId = parseInt(data.split('_')[3]);
+      // تخزين أن المستخدم يريد الرد على هذا الأدمن
+      await User.update({ state: JSON.stringify({ action: 'support_reply_user', targetAdminId: adminId }) }, { where: { id: userId } });
       await bot.sendMessage(userId, await getText(userId, 'sendReply'));
       await bot.answerCallbackQuery(query.id);
       return;
@@ -1001,7 +1151,7 @@ bot.on('callback_query', async (query) => {
 
     // تبديل زر
     if (data.startsWith('toggle_button_') && isAdmin(userId)) {
-      const parts = data.split('_'); // toggle_button_<id>_<action>
+      const parts = data.split('_');
       const buttonId = parts[2];
       const action = parts[3];
       await toggleMenuButton(buttonId, action, userId);
@@ -1010,7 +1160,7 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // رد الدعم الفني
+    // رد الدعم الفني (من الأدمن على المستخدم)
     if (data.startsWith('support_reply_')) {
       const targetUserId = parseInt(data.split('_')[2]);
       if (!isAdmin(userId)) {
@@ -1067,38 +1217,23 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // بدء عملية الشحن
+    // بدء عملية الشحن - عرض خيارات العملات
     if (data === 'deposit') {
-      await User.update({ state: JSON.stringify({ action: 'deposit_amount' }) }, { where: { id: userId } });
-      await bot.sendMessage(userId, await getText(userId, 'enterDepositAmount', { min: 1, max: 10000 }));
+      await showCurrencyOptions(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
 
-    // اختيار طريقة دفع للشحن (بعد إدخال المبلغ)
-    if (data.startsWith('deposit_method_')) {
-      const parts = data.split('_');
-      const methodId = parseInt(parts[2]);
-      const amount = parseFloat(parts[3]);
-      const method = await PaymentMethod.findByPk(methodId);
-      if (!method) {
-        await bot.sendMessage(userId, await getText(userId, 'error'));
-        await sendMainMenu(userId);
-        await bot.answerCallbackQuery(query.id);
-        return;
-      }
-      if (amount < method.minDeposit || amount > method.maxDeposit) {
-        await bot.sendMessage(userId, `❌ Amount must be between ${method.minDeposit} and ${method.maxDeposit} USD.`);
-        await sendMainMenu(userId);
-        await bot.answerCallbackQuery(query.id);
-        return;
-      }
-      await User.update({ state: JSON.stringify({ action: 'deposit_tx', methodId, amount }) }, { where: { id: userId } });
-      if (method.type === 'auto') {
-        await bot.sendMessage(userId, `${await getText(userId, 'pay')}\n\n${method.details}\n\n${await getText(userId, 'sendTx')}`);
-      } else {
-        await bot.sendMessage(userId, `${await getText(userId, 'pay')}\n\n${method.details}\n\n${await getText(userId, 'sendImage')}`);
-      }
+    // اختيار العملة
+    if (data === 'deposit_currency_iqd') {
+      await User.update({ state: JSON.stringify({ action: 'deposit_amount', currency: 'IQD' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterDepositAmountUSD'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+    if (data === 'deposit_currency_usd') {
+      await User.update({ state: JSON.stringify({ action: 'deposit_amount', currency: 'USD' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterDepositAmountUSD'));
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -1260,7 +1395,7 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // طرق الدفع
+    // طرق الدفع (للأدمن) – نضيف إعدادات الشحن هنا
     if (data === 'admin_payment_methods' && isAdmin(userId)) {
       const methods = await PaymentMethod.findAll();
       let msg = '💳 Payment Methods:\n';
@@ -1280,6 +1415,45 @@ bot.on('callback_query', async (query) => {
         ]
       };
       await bot.sendMessage(userId, msg, { reply_markup: keyboard });
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // إدارة إعدادات الشحن
+    if (data === 'admin_manage_deposit_settings' && isAdmin(userId)) {
+      await showDepositSettingsAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل سعر الدينار
+    if (data === 'admin_set_iqd_rate' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'set_iqd_rate' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterNewRate'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل محفظة USDT
+    if (data === 'admin_set_usdt_wallet' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'set_usdt_wallet' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterWalletAddress'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل سوبر كي الدينار
+    if (data === 'admin_set_iqd_wallet' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'set_iqd_wallet' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterWalletAddress'));
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    // تعديل تعليمات الدفع
+    if (data === 'admin_set_deposit_instructions' && isAdmin(userId)) {
+      await User.update({ state: JSON.stringify({ action: 'set_deposit_instructions' }) }, { where: { id: userId } });
+      await bot.sendMessage(userId, await getText(userId, 'enterInstructions'));
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -1614,31 +1788,50 @@ bot.on('message', async (msg) => {
 
     let state = user.state ? JSON.parse(user.state) : null;
 
-    // معالجة الرد على الدعم
+    // معالجة الرد على الدعم (من الأدمن)
     if (state && state.action === 'support_reply' && isAdmin(userId)) {
       const targetUserId = state.targetUserId;
-      if (text) {
-        const replyMsg = await getText(userId, 'replyMessage') + `\n\n${text}`;
-        await bot.sendMessage(targetUserId, replyMsg);
-        await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
-      } else if (photo) {
-        const fileId = photo[photo.length - 1].file_id;
-        const replyMsg = await getText(userId, 'replyMessage');
-        await bot.sendPhoto(targetUserId, fileId, { caption: replyMsg });
-        await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
-      } else if (video) {
-        const fileId = video.file_id;
-        const replyMsg = await getText(userId, 'replyMessage');
-        await bot.sendVideo(targetUserId, fileId, { caption: replyMsg });
-        await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
+      let replyMsg = text || '';
+      let fileId = null;
+      if (photo) fileId = photo[photo.length - 1].file_id;
+      else if (video) fileId = video.file_id;
+
+      const supportReplyText = await getText(userId, 'replyMessage') + `\n\n${replyMsg}`;
+      if (fileId) {
+        if (photo) await bot.sendPhoto(targetUserId, fileId, { caption: supportReplyText });
+        else await bot.sendVideo(targetUserId, fileId, { caption: supportReplyText });
       } else {
-        await bot.sendMessage(userId, 'Please send text, photo, or video.');
-        return;
+        await bot.sendMessage(targetUserId, supportReplyText);
       }
+      // إضافة زر رد للمستخدم
+      const replyButton = {
+        inline_keyboard: [[{ text: '📩 Reply to Support', callback_data: `support_reply_user_${userId}` }]]
+      };
+      await bot.sendMessage(targetUserId, 'You can reply to this message using the button below.', { reply_markup: replyButton });
+      await bot.sendMessage(userId, await getText(userId, 'supportReplySent'));
       await User.update({ state: null }, { where: { id: userId } });
       return;
     }
 
+    // معالجة رد المستخدم على الدعم (من مستخدم عادي)
+    if (state && state.action === 'support_reply_user') {
+      const targetAdminId = state.targetAdminId;
+      let supportText = text || '';
+      let photoFileId = null;
+      if (photo) photoFileId = photo[photo.length - 1].file_id;
+
+      const notifText = await getText(targetAdminId, 'supportNotification', { userId, message: supportText });
+      if (photoFileId) {
+        await bot.sendPhoto(targetAdminId, photoFileId, { caption: notifText });
+      } else {
+        await bot.sendMessage(targetAdminId, notifText);
+      }
+      await bot.sendMessage(userId, await getText(userId, 'supportMessageSent'));
+      await User.update({ state: null }, { where: { id: userId } });
+      return;
+    }
+
+    // معالجة إدخالات الأدمن (إعدادات البوت، إضافة تاجر، الخ)
     if (state && isAdmin(userId)) {
       if (state.action === 'add_bot' && state.step === 'token') {
         try {
@@ -1976,6 +2169,44 @@ bot.on('message', async (msg) => {
           return;
         }
       }
+
+      // إعدادات الشحن (الأدمن)
+      if (state.action === 'set_iqd_rate') {
+        const rate = parseFloat(text);
+        if (isNaN(rate) || rate <= 0) {
+          await bot.sendMessage(userId, 'Invalid rate');
+          return;
+        }
+        await updateDepositConfig('IQD', 'rate', rate);
+        await bot.sendMessage(userId, await getText(userId, 'rateSet'));
+        await User.update({ state: null }, { where: { id: userId } });
+        await showDepositSettingsAdmin(userId);
+        return;
+      }
+      if (state.action === 'set_usdt_wallet') {
+        await updateDepositConfig('USD', 'walletAddress', text);
+        await bot.sendMessage(userId, await getText(userId, 'walletSet'));
+        await User.update({ state: null }, { where: { id: userId } });
+        await showDepositSettingsAdmin(userId);
+        return;
+      }
+      if (state.action === 'set_iqd_wallet') {
+        await updateDepositConfig('IQD', 'walletAddress', text);
+        await bot.sendMessage(userId, await getText(userId, 'walletSet'));
+        await User.update({ state: null }, { where: { id: userId } });
+        await showDepositSettingsAdmin(userId);
+        return;
+      }
+      if (state.action === 'set_deposit_instructions') {
+        // نحدد اللغة بناءً على لغة الأدمن
+        const adminLang = user.lang;
+        await updateDepositConfig('USD', 'instructions', text);
+        await updateDepositConfig('IQD', 'instructions', text);
+        await bot.sendMessage(userId, await getText(userId, 'instructionsSet'));
+        await User.update({ state: null }, { where: { id: userId } });
+        await showDepositSettingsAdmin(userId);
+        return;
+      }
     }
 
     // معالجة الدعم (إرسال رسالة من المستخدم)
@@ -1989,9 +2220,11 @@ bot.on('message', async (msg) => {
       } else {
         await bot.sendMessage(ADMIN_ID, notifText);
       }
-      await bot.sendMessage(ADMIN_ID, await getText(ADMIN_ID, 'replyToSupport'), {
-        reply_markup: { inline_keyboard: [[{ text: 'Reply', callback_data: `support_reply_${userId}` }]] }
-      });
+      // إضافة زر رد للمشرف
+      const replyButton = {
+        inline_keyboard: [[{ text: 'Reply', callback_data: `support_reply_${userId}` }]]
+      };
+      await bot.sendMessage(ADMIN_ID, await getText(ADMIN_ID, 'replyToSupport'), { reply_markup: replyButton });
       await bot.sendMessage(userId, await getText(userId, 'supportMessageSent'));
       await User.update({ state: null }, { where: { id: userId } });
       return;
@@ -2013,7 +2246,7 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // معالجة الشراء
+    // معالجة الشراء (إدخال الكمية)
     if (state && state.action === 'buy') {
       const qty = parseInt(text);
       if (isNaN(qty) || qty <= 0) {
@@ -2072,39 +2305,26 @@ bot.on('message', async (msg) => {
         await bot.sendMessage(userId, '❌ Invalid amount');
         return;
       }
-      await User.update({ state: JSON.stringify({ action: 'deposit_amount', amount }) }, { where: { id: userId } });
-      await showPaymentMethodsForDeposit(userId, amount);
+      const currency = state.currency;
+      await showPaymentMethodsForDeposit(userId, amount, currency);
+      await User.update({ state: null }, { where: { id: userId } }); // سننتظر الصورة في الحالة التالية
       return;
     }
 
-    // معالجة إرسال TXID أو صورة الدفع للشحن
-    if (state && state.action === 'deposit_tx') {
-      const { methodId, amount } = state;
-      const method = await PaymentMethod.findByPk(methodId);
-      if (!method) {
-        await bot.sendMessage(userId, 'Payment method not found');
-        await sendMainMenu(userId);
-        await User.update({ state: null }, { where: { id: userId } });
+    // معالجة استلام إثبات الدفع (صورة + نص اختياري)
+    if (state && state.action === 'deposit_awaiting_proof') {
+      const amount = state.amount;
+      const currency = state.currency;
+      let imageFileId = null;
+      let caption = text || '';
+      if (photo) {
+        imageFileId = photo[photo.length - 1].file_id;
+      } else {
+        await bot.sendMessage(userId, await getText(userId, 'sendImage'));
         return;
       }
-      if (method.type === 'auto') {
-        const txid = text.trim();
-        const valid = await checkAutoPayment(txid, amount);
-        if (!valid) {
-          await bot.sendMessage(userId, await getText(userId, 'invalidTx'));
-          return;
-        }
-        await requestDeposit(userId, amount, methodId, txid, false);
-        await bot.sendMessage(userId, await getText(userId, 'depositRequestPending'));
-      } else {
-        if (!photo) {
-          await bot.sendMessage(userId, await getText(userId, 'sendImage'));
-          return;
-        }
-        const fileId = photo[photo.length - 1].file_id;
-        await requestDeposit(userId, amount, methodId, fileId, true);
-        await bot.sendMessage(userId, await getText(userId, 'depositRequestPending'));
-      }
+      await requestDeposit(userId, amount, currency, caption, imageFileId);
+      await bot.sendMessage(userId, await getText(userId, 'depositProofReceived'));
       await User.update({ state: null }, { where: { id: userId } });
       await sendMainMenu(userId);
       return;
@@ -2190,6 +2410,9 @@ setInterval(async () => {
 // ========================
 sequelize.sync({ alter: true }).then(async () => {
   console.log('✅ Database synced');
+  // إنشاء إعدادات الشحن الافتراضية إن لم تكن موجودة
+  await getDepositConfig('USD');
+  await getDepositConfig('IQD');
   const PORT = process.env.PORT || 3000;
   app.get('/', (req, res) => res.send('Bot is running'));
   app.listen(PORT, () => console.log(`🚀 Server started on port ${PORT}`));
