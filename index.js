@@ -96,7 +96,6 @@ const BalanceTransaction = sequelize.define('BalanceTransaction', {
   adminMessageId: { type: DataTypes.BIGINT, allowNull: true },
   createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 });
-
 const BotService = sequelize.define('BotService', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
   token: { type: DataTypes.STRING, unique: true, allowNull: false },
@@ -738,11 +737,11 @@ async function sendMainMenu(userId) {
 
   addButton('redeem', await getText(userId, 'redeem'));
   addButton('buy', await getText(userId, 'buy'));
-  addButton('myBalance', await getText(userId, 'myBalance'));
+  addButton('my_balance', await getText(userId, 'myBalance'));
   addButton('deposit', await getText(userId, 'deposit'));
   addButton('referral', await getText(userId, 'referral'));
   addButton('discount', await getText(userId, 'discount'));
-  addButton('myPurchases', await getText(userId, 'myPurchases'));
+  addButton('my_purchases', await getText(userId, 'myPurchases'));
   addButton('support', await getText(userId, 'support'));
 
   if (isAdmin(userId)) {
@@ -971,15 +970,73 @@ async function redeemCard(cardKey, merchantDictId, platformId = '1') {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 10000
     });
+
     if (response.data && response.data.code === 1) {
       return { success: true, data: response.data.data };
     } else {
       return { success: false, reason: response.data?.msg || 'Unknown error' };
     }
   } catch (error) {
-    console.error('Redeem API error:', error.message);
-    return { success: false, reason: 'API connection failed' };
+    console.error('Redeem API error:', error.response?.data || error.message);
+    return {
+      success: false,
+      reason: error.response?.data?.msg || error.message || 'API connection failed'
+    };
   }
+}
+
+async function redeemCardSmart(cardKey) {
+  const services = await RedeemService.findAll();
+
+  if (!services || services.length === 0) {
+    return { success: false, reason: 'No redeem services configured' };
+  }
+
+  // ضع هنا أسماء التجار المفضلة لديك بالترتيب
+  const preferredNames = [
+    'Amazon',
+    'Walmart',
+    'Target'
+  ];
+
+  const preferred = [];
+  const others = [];
+
+  for (const s of services) {
+    const en = (s.nameEn || '').toLowerCase();
+    const ar = (s.nameAr || '').toLowerCase();
+
+    const isPreferred = preferredNames.some(name => {
+      const n = name.toLowerCase();
+      return en.includes(n) || ar.includes(n);
+    });
+
+    if (isPreferred) {
+      preferred.push(s);
+    } else {
+      others.push(s);
+    }
+  }
+
+  const orderedServices = [...preferred, ...others];
+
+  let lastReason = 'No compatible merchant found';
+
+  for (const service of orderedServices) {
+    const result = await redeemCard(cardKey, service.merchantDictId, service.platformId || '1');
+
+    if (result.success) {
+      return {
+        success: true,
+        data: result.data,
+        service
+      };
+    }
+
+    lastReason = result.reason || lastReason;
+  }
+
+  return { success: false, reason: lastReason };
 }
 
 function formatCardDetails(cardData) {
@@ -1385,24 +1442,25 @@ bot.on('callback_query', async (query) => {
 
     // الشراء والاسترداد
     if (data === 'buy') {
-      await showMerchantsForBuy(userId);
-      await bot.answerCallbackQuery(query.id);
-      return;
-    }
+  await showMerchantsForBuy(userId);
+  await bot.answerCallbackQuery(query.id);
+  return;
+}
 
-    if (data === 'redeem') {
-      await showRedeemServices(userId);
-      await bot.answerCallbackQuery(query.id);
-      return;
-    }
+if (data === 'redeem') {
+  await User.update({ state: JSON.stringify({ action: 'redeem_smart' }) }, { where: { id: userId } });
+  await bot.sendMessage(userId, await getText(userId, 'sendCodeToRedeem'));
+  await bot.answerCallbackQuery(query.id);
+  return;
+}
 
-    if (data.startsWith('redeem_service_')) {
-      const serviceId = parseInt(data.split('_')[2]);
-      await User.update({ state: JSON.stringify({ action: 'redeem_via_service', serviceId }) }, { where: { id: userId } });
-      await bot.sendMessage(userId, await getText(userId, 'sendCodeToRedeem'));
-      await bot.answerCallbackQuery(query.id);
-      return;
-    }
+if (data.startsWith('redeem_service_')) {
+  const serviceId = parseInt(data.split('_')[2]);
+  await User.update({ state: JSON.stringify({ action: 'redeem_via_service', serviceId }) }, { where: { id: userId } });
+  await bot.sendMessage(userId, await getText(userId, 'sendCodeToRedeem'));
+  await bot.answerCallbackQuery(query.id);
+  return;
+}
 
     if (data.startsWith('buy_merchant_')) {
       const merchantId = parseInt(data.split('_')[2]);
@@ -2021,7 +2079,7 @@ bot.on('message', async (msg) => {
 
       if (state.action === 'set_price') {
         const price = parseFloat(text);
-        if (isNaN(price)) {
+        if (isNaN(price)){
           await bot.sendMessage(userId, '❌ Invalid price');
           return;
         }
@@ -2359,7 +2417,6 @@ bot.on('message', async (msg) => {
       const merchant = await Merchant.findByPk(state.merchantId);
       if (!merchant) {
         await bot.sendMessage(userId, 'Merchant not found');
-        await User.update({ state: null }, { where: { id: userId } });
         return;
       }
       const available = await Code.count({ where: { merchantId: merchant.id, isUsed: false } });
@@ -2401,18 +2458,17 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // معالجة إدخال المبلغ للشحن
-    if (state && state.action === 'deposit_amount') {
-      const amount = parseFloat(text);
-      if (isNaN(amount) || amount <= 0) {
-        await bot.sendMessage(userId, '❌ Invalid amount');
-        return;
-      }
-      const currency = state.currency;
-      await showPaymentMethodsForDeposit(userId, amount, currency);
-      await User.update({ state: null }, { where: { id: userId } }); // ننتظر الصورة في الحالة التالية
-      return;
-    }
+// معالجة إدخال المبلغ للشحن
+if (state && state.action === 'deposit_amount') {
+  const amount = parseFloat(text);
+  if (isNaN(amount) || amount <= 0) {
+    await bot.sendMessage(userId, '❌ Invalid amount');
+    return;
+  }
+  const currency = state.currency;
+  await showPaymentMethodsForDeposit(userId, amount, currency);
+  return;
+}
 
     // معالجة استلام إثبات الدفع (صورة + نص اختياري)
     if (state && state.action === 'deposit_awaiting_proof') {
@@ -2434,31 +2490,60 @@ bot.on('message', async (msg) => {
     }
 
     // معالجة الاسترداد عبر الخدمات
-    if (state && state.action === 'redeem_via_service') {
-      const serviceId = state.serviceId;
-      const service = await RedeemService.findByPk(serviceId);
-      if (!service) {
-        await bot.sendMessage(userId, 'Service not found');
-        await sendMainMenu(userId);
-        await User.update({ state: null }, { where: { id: userId } });
-        return;
-      }
-      const cardCode = text.trim();
-      const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
-      const result = await redeemCard(cardCode, service.merchantDictId, service.platformId);
-      await bot.deleteMessage(userId, waitingMsg.message_id);
-      if (result.success) {
-        const cardDetails = formatCardDetails(result.data);
-        const successMsg = await getText(userId, 'redeemSuccess', { details: cardDetails });
-        await bot.sendMessage(userId, successMsg);
-      } else {
-        const failMsg = await getText(userId, 'redeemFailed', { reason: result.reason });
-        await bot.sendMessage(userId, failMsg);
-      }
-      await User.update({ state: null }, { where: { id: userId } });
-      await sendMainMenu(userId);
-      return;
-    }
+if (state && state.action === 'redeem_via_service') {
+  const serviceId = state.serviceId;
+  const service = await RedeemService.findByPk(serviceId);
+  if (!service) {
+    await bot.sendMessage(userId, 'Service not found');
+    await sendMainMenu(userId);
+    await User.update({ state: null }, { where: { id: userId } });
+    return;
+  }
+
+  const cardCode = text.trim();
+  const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
+  const result = await redeemCard(cardCode, service.merchantDictId, service.platformId);
+
+  await bot.deleteMessage(userId, waitingMsg.message_id).catch(() => {});
+
+  if (result.success) {
+    const cardDetails = formatCardDetails(result.data);
+    const successMsg = await getText(userId, 'redeemSuccess', { details: cardDetails });
+    await bot.sendMessage(userId, successMsg);
+  } else {
+    const failMsg = await getText(userId, 'redeemFailed', { reason: result.reason });
+    await bot.sendMessage(userId, failMsg);
+  }
+
+  await User.update({ state: null }, { where: { id: userId } });
+  await sendMainMenu(userId);
+  return;
+}
+
+if (state && state.action === 'redeem_smart') {
+  const cardCode = text.trim();
+  const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
+
+  const result = await redeemCardSmart(cardCode);
+
+  await bot.deleteMessage(userId, waitingMsg.message_id).catch(() => {});
+
+  if (result.success) {
+    const cardDetails = formatCardDetails(result.data);
+    const serviceName = result.service ? `${result.service.nameEn} / ${result.service.nameAr}` : 'Auto';
+    const successMsg = await getText(userId, 'redeemSuccess', {
+      details: `${cardDetails}\n\n🏪 Selected Service: ${serviceName}`
+    });
+    await bot.sendMessage(userId, successMsg);
+  } else {
+    const failMsg = await getText(userId, 'redeemFailed', { reason: result.reason });
+    await bot.sendMessage(userId, failMsg);
+  }
+
+  await User.update({ state: null }, { where: { id: userId } });
+  await sendMainMenu(userId);
+  return;
+}
   } catch (err) {
     console.error('Message handler error:', err);
     await bot.sendMessage(userId, 'An error occurred. Please try again later.');
@@ -2471,16 +2556,37 @@ bot.on('message', async (msg) => {
 app.post('/api/code', async (req, res) => {
   try {
     const { token, card_key, merchant_dict_id, platform_id } = req.body;
+
     const botService = await BotService.findOne({ where: { token, isActive: true } });
     if (!botService || !botService.allowedActions.includes('code')) {
       return res.status(403).json({ error: 'Bot not authorized for /code' });
     }
-    if (!card_key || !merchant_dict_id) {
-      return res.status(400).json({ error: 'Missing required fields' });
+
+    if (!card_key) {
+      return res.status(400).json({ error: 'Missing card_key' });
     }
-    const result = await redeemCard(card_key, merchant_dict_id, platform_id || '1');
+
+    let result;
+
+    if (merchant_dict_id) {
+      result = await redeemCard(card_key, merchant_dict_id, platform_id || '1');
+    } else {
+      result = await redeemCardSmart(card_key);
+    }
+
     if (result.success) {
-      res.json({ success: true, data: result.data });
+      res.json({
+        success: true,
+        data: result.data,
+        service: result.service
+          ? {
+              id: result.service.id,
+              nameEn: result.service.nameEn,
+              nameAr: result.service.nameAr,
+              merchantDictId: result.service.merchantDictId
+            }
+          : null
+      });
     } else {
       res.status(400).json({ success: false, error: result.reason });
     }
