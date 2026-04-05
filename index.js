@@ -1239,8 +1239,16 @@ async function importReferralStockCodesFromPrivateChannel() {
   }
 
   const merchant = await getReferralStockMerchant();
+  const existingRows = await Code.findAll({
+    where: { merchantId: merchant.id },
+    attributes: ['value']
+  });
+
+  const existingSet = new Set(existingRows.map(row => normalizeChatGptUpCode(row.value)).filter(Boolean));
+  const seenInImport = new Set();
   const toCreate = [];
   const perPostImported = new Map();
+  let skippedDuplicates = 0;
 
   for (const post of cachedPosts) {
     const extracted = Array.isArray(post.extractedCodes) && post.extractedCodes.length ? post.extractedCodes : extractChatGptUpCodes(post.content || '');
@@ -1250,6 +1258,12 @@ async function importReferralStockCodesFromPrivateChannel() {
       const normalized = normalizeChatGptUpCode(code);
       if (!normalized) continue;
 
+      if (existingSet.has(normalized) || seenInImport.has(normalized)) {
+        skippedDuplicates += 1;
+        continue;
+      }
+
+      seenInImport.add(normalized);
       toCreate.push({ value: normalized, merchantId: merchant.id, isUsed: false });
       addedForPost += 1;
     }
@@ -1260,7 +1274,7 @@ async function importReferralStockCodesFromPrivateChannel() {
   }
 
   if (!toCreate.length) {
-    return { success: false, reason: 'no_codes', posts: cachedPosts.length, duplicates: 0 };
+    return { success: false, reason: 'no_codes', posts: cachedPosts.length, duplicates: skippedDuplicates };
   }
 
   await Code.bulkCreate(toCreate);
@@ -4516,8 +4530,38 @@ bot.on('callback_query', async query => {
       return;
     }
 
+    if (data === 'admin_toggle_private_codes_auto_send' && isAdmin(userId)) {
+      const updated = await togglePrivateCodesAutoSend();
+      await showPrivateCodesChannelAdmin(userId);
+      await bot.answerCallbackQuery(query.id, {
+        text: updated.enabled ? '✅ تم تشغيل السحب التلقائي.' : '⛔ تم إيقاف السحب التلقائي.'
+      });
+      return;
+    }
+
+    if (data === 'admin_set_private_codes_auto_interval' && isAdmin(userId)) {
+      await setUserState(userId, { action: 'set_private_codes_auto_interval' });
+      await bot.sendMessage(userId, '⏱️ أرسل عدد الدقائق بين كل عملية سحب تلقائي. مثال: 5');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_set_private_codes_auto_quantity' && isAdmin(userId)) {
+      await setUserState(userId, { action: 'set_private_codes_auto_quantity' });
+      await bot.sendMessage(userId, '🔢 أرسل عدد الأكواد التي تريد إرسالها تلقائيًا في كل مرة. مثال: 100 أو 200');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_send_custom_codes_to_private_channel' && isAdmin(userId)) {
+      await setUserState(userId, { action: 'send_custom_codes_to_private_channel' });
+      await bot.sendMessage(userId, '📤 أرسل الآن عدد الأكواد التي تريد إرسالها إلى القناة الخاصة. سيتم تقسيمها تلقائيًا إلى دفعات من 100 عند الحاجة.');
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
     if (data === 'admin_send_100_codes_to_private_channel' && isAdmin(userId)) {
-      const result = await sendCodesToPrivateChannel(userId, 100);
+      const result = await sendCodesToPrivateChannel(userId, 100, { batchSize: 100, headerMode: 'batch' });
       if (!result.success) {
         const msg = result.reason === 'channel_not_configured'
           ? '❌ القناة الخاصة غير مفعلة أو غير محفوظة.'
