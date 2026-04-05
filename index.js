@@ -1758,22 +1758,24 @@ async function configurePrivateCodesAutoSendTimer() {
 
       const result = await sendCodesToPrivateChannel(ADMIN_ID, latestConfig.quantity, {
         batchSize: 100,
-        headerMode: 'batch',
-        markUsedByAdmin: false
+        headerMode: 'batch'
       });
 
       if (result.success) {
-        await bot.sendMessage(ADMIN_ID, `✅ الإرسال التلقائي: تم إرسال ${result.sent} كود إلى القناة الخاصة.
-المتبقي في المخزون: ${result.remaining}`).catch(() => {});
-      } else if (result.reason !== 'not_enough_stock') {
+        const suffix = result.partial && result.reason
+          ? `
+⚠️ تم إرسال المتوفر فقط حالياً. سبب التوقف: ${result.reason}`
+          : '';
+        await bot.sendMessage(ADMIN_ID, `✅ الإرسال التلقائي: تم إرسال ${result.sent} كود إلى القناة الخاصة.${suffix}`).catch(() => {});
+      } else {
         const reasonText = result.reason === 'channel_not_configured'
           ? 'القناة الخاصة غير مفعلة أو غير محفوظة.'
           : result.reason === 'channel_needs_forwarded_post'
             ? 'تم حفظ رابط الدعوة فقط، ويجب إعادة توجيه منشور واحد من القناة ليتم حفظ chat_id.'
             : result.reason === 'telegram_send_failed'
               ? 'فشل إرسال الأكواد للقناة. تأكد أن البوت مشرف داخل القناة الخاصة.'
-              : 'حدث خطأ أثناء الإرسال التلقائي.';
-        await bot.sendMessage(ADMIN_ID, `❌ الإرسال التلقائي متوقف مؤقتًا: ${reasonText}`).catch(() => {});
+              : String(result.reason || 'حدث خطأ أثناء الإرسال التلقائي.');
+        await bot.sendMessage(ADMIN_ID, `❌ الإرسال التلقائي: ${reasonText}`).catch(() => {});
       }
     } catch (err) {
       console.error('private auto send interval error:', err);
@@ -1834,6 +1836,48 @@ async function showPrivateCodesChannelAdmin(userId) {
   await bot.sendMessage(userId, msg, { reply_markup: keyboard });
 }
 
+async function generateChatGptCodesFromSite(quantity = 100) {
+  const requestedQuantity = Math.max(1, parseInt(quantity, 10) || 100);
+  const codes = [];
+  let lastFailureReason = '';
+
+  for (let i = 0; i < requestedQuantity; i += 1) {
+    const email = generateRandomEmail();
+    const result = await getChatGPTCode(email);
+
+    if (!result.success) {
+      lastFailureReason = String(result.reason || 'Unknown error');
+      break;
+    }
+
+    const normalized = normalizeChatGptUpCode(result.code) || String(result.code || '').trim();
+    if (!normalized) {
+      lastFailureReason = 'Received empty code from site';
+      break;
+    }
+
+    codes.push(normalized);
+  }
+
+  if (!codes.length) {
+    return {
+      success: false,
+      reason: lastFailureReason || 'No hay códigos disponibles en este momento',
+      sent: 0,
+      requestedQuantity
+    };
+  }
+
+  return {
+    success: true,
+    codes,
+    sent: codes.length,
+    requestedQuantity,
+    partial: codes.length !== requestedQuantity,
+    failureReason: lastFailureReason || ''
+  };
+}
+
 async function sendCodesToPrivateChannel(adminId, quantity = 100, options = {}) {
   const config = await getPrivateCodesChannelConfig();
   if (!config.enabled || !config.chatId) {
@@ -1843,55 +1887,28 @@ async function sendCodesToPrivateChannel(adminId, quantity = 100, options = {}) 
   const requestedQuantity = Math.max(1, parseInt(quantity, 10) || 100);
   const batchSize = Math.max(1, parseInt(options.batchSize, 10) || 100);
   const headerMode = options.headerMode || 'single';
-  const markUsedByAdmin = options.markUsedByAdmin !== false;
 
-  const merchant = await getReferralStockMerchant();
-  const available = await Code.count({ where: { merchantId: merchant.id, isUsed: false } });
-  if (available < requestedQuantity) {
-    return { success: false, reason: 'not_enough_stock', available };
+  const generated = await generateChatGptCodesFromSite(requestedQuantity);
+  if (!generated.success) {
+    return generated;
   }
 
-  const codeRows = await Code.findAll({
-    where: { merchantId: merchant.id, isUsed: false },
-    limit: requestedQuantity,
-    order: [['id', 'ASC']]
-  });
-
-  if (codeRows.length < requestedQuantity) {
-    return { success: false, reason: 'not_enough_stock', available: codeRows.length };
-  }
-
-  const reservedIds = codeRows.map(c => c.id);
-  const t = await sequelize.transaction();
-  try {
-    await Code.update(
-      { isUsed: true, usedBy: markUsedByAdmin ? adminId : null, soldAt: new Date() },
-      { where: { id: reservedIds }, transaction: t }
-    );
-    await t.commit();
-  } catch (err) {
-    await t.rollback();
-    console.error('sendCodesToPrivateChannel stock update error:', err);
-    return { success: false, reason: 'db_error' };
-  }
-
-  const codeBatches = chunkArray(codeRows, batchSize);
+  const codeBatches = chunkArray(generated.codes, batchSize);
   try {
     for (let batchIndex = 0; batchIndex < codeBatches.length; batchIndex += 1) {
-      const batchRows = codeBatches[batchIndex];
-      const payloadLines = batchRows.map((c, index) => {
+      const batchCodes = codeBatches[batchIndex];
+      const payloadLines = batchCodes.map((code, index) => {
         const serial = (batchIndex * batchSize) + index + 1;
-        return `${serial}- ${c.extra ? `${c.value}
-${c.extra}` : c.value}`;
+        return `${serial}- ${code}`;
       });
 
       const chunks = [];
       const totalBatches = codeBatches.length;
       const headerText = headerMode === 'batch'
-        ? `📦 دفعة ${batchIndex + 1}/${totalBatches} - ${batchRows.length} كود
+        ? `📦 دفعة ${batchIndex + 1}/${totalBatches} - ${batchCodes.length} كود
 
 `
-        : `📦 ${requestedQuantity} كود جديد للقناة الخاصة
+        : `📦 ${generated.sent} كود جديد للقناة الخاصة
 
 `;
       let current = headerText;
@@ -1914,14 +1931,16 @@ ${c.extra}` : c.value}`;
       }
     }
 
-    const remaining = await Code.count({ where: { merchantId: merchant.id, isUsed: false } });
-    return { success: true, sent: codeRows.length, remaining, batches: codeBatches.length };
+    return {
+      success: true,
+      sent: generated.sent,
+      requestedQuantity: generated.requestedQuantity,
+      batches: codeBatches.length,
+      partial: generated.partial,
+      reason: generated.failureReason || ''
+    };
   } catch (err) {
     console.error('sendCodesToPrivateChannel telegram send error:', err.response?.body || err.message);
-    await Code.update(
-      { isUsed: false, usedBy: null, soldAt: null },
-      { where: { id: reservedIds } }
-    ).catch(() => {});
     return { success: false, reason: 'telegram_send_failed' };
   }
 }
@@ -5879,15 +5898,16 @@ bot.on('message', async msg => {
             ? '❌ القناة الخاصة غير مفعلة أو غير محفوظة.'
             : result.reason === 'channel_needs_forwarded_post'
               ? '❌ تم حفظ رابط الدعوة الخاص، لكن الإرسال يحتاج أيضاً إعادة توجيه منشور واحد من نفس القناة ليتم حفظ chat_id الداخلي.'
-              : result.reason === 'not_enough_stock'
-                ? `❌ العدد المطلوب غير متوفر. المتوفر حالياً: ${result.available || 0}`
-                : result.reason === 'telegram_send_failed'
-                  ? '❌ فشل إرسال الأكواد للقناة. تأكد أن البوت مشرف داخل القناة الخاصة.'
-                  : '❌ حدث خطأ أثناء الإرسال.';
+              : result.reason === 'telegram_send_failed'
+                ? '❌ فشل إرسال الأكواد للقناة. تأكد أن البوت مشرف داخل القناة الخاصة.'
+                : `❌ خطأ: ${String(result.reason || 'Unknown error')}`;
           await bot.sendMessage(userId, msg);
         } else {
-          await bot.sendMessage(userId, `✅ تم إرسال ${result.sent} كود إلى القناة الخاصة على ${result.batches} دفعة.
-المتبقي في المخزون: ${result.remaining}`);
+          const suffix = result.partial && result.reason
+            ? `
+⚠️ تم إرسال المتوفر فقط حالياً. سبب التوقف: ${result.reason}`
+            : '';
+          await bot.sendMessage(userId, `✅ تم إرسال ${result.sent} كود إلى القناة الخاصة على ${result.batches} دفعة.${suffix}`);
         }
 
         await clearUserState(userId);
