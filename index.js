@@ -1840,16 +1840,24 @@ async function generateChatGptCodesFromSite(quantity = 100) {
   const requestedQuantity = Math.max(1, parseInt(quantity, 10) || 100);
   const codes = [];
   let lastFailureReason = '';
+  let consecutiveFailures = 0;
+  const maxConsecutiveFailures = 3;
 
-  for (let i = 0; i < requestedQuantity; i += 1) {
+  while (codes.length < requestedQuantity) {
     const email = generateRandomEmail();
-    const result = await getChatGPTCode(email);
+    const result = await getChatGPTCode(email, { maxAttempts: 5 });
 
     if (!result.success) {
+      consecutiveFailures += 1;
       lastFailureReason = String(result.reason || 'Unknown error');
-      break;
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        break;
+      }
+      await wait(getChatGptRetryDelay(consecutiveFailures));
+      continue;
     }
 
+    consecutiveFailures = 0;
     const normalized = normalizeChatGptUpCode(result.code) || String(result.code || '').trim();
     if (!normalized) {
       lastFailureReason = 'Received empty code from site';
@@ -1857,6 +1865,9 @@ async function generateChatGptCodesFromSite(quantity = 100) {
     }
 
     codes.push(normalized);
+    if (codes.length < requestedQuantity) {
+      await wait(getRandomInt(700, 1500));
+    }
   }
 
   if (!codes.length) {
@@ -4145,6 +4156,45 @@ const CHATGPT_HEADERS = {
 
 let chatGptCookieCache = { cookies: null, fetchedAt: 0 };
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getRandomInt(min, max) {
+  const safeMin = Math.ceil(Number(min) || 0);
+  const safeMax = Math.floor(Number(max) || safeMin);
+  if (safeMax <= safeMin) return safeMin;
+  return Math.floor(Math.random() * (safeMax - safeMin + 1)) + safeMin;
+}
+
+function getChatGptRetryDelay(attempt) {
+  const baseDelays = [0, 2500, 5000, 9000, 15000, 22000];
+  const index = Math.min(attempt, baseDelays.length - 1);
+  return baseDelays[index] + getRandomInt(300, 1200);
+}
+
+function isChatGptRateLimitReason(value) {
+  const text = String(value || '').toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes('has alcanzado el limite de solicitudes') ||
+    text.includes('has alcanzado el límite de solicitudes') ||
+    text.includes('too many requests') ||
+    text.includes('rate limit') ||
+    text.includes('limite de solicitudes') ||
+    text.includes('límite de solicitudes') ||
+    text.includes('temporarily unavailable')
+  );
+}
+
+function shouldRefreshCookiesForStatus(status) {
+  return [403, 419, 429].includes(Number(status));
+}
+
+function shouldRetryChatGptRequest(status, message) {
+  return shouldRefreshCookiesForStatus(status) || isChatGptRateLimitReason(message) || Number(status) >= 500;
+}
+
 function buildCookieHeader(cookieMap = {}) {
   return Object.entries(cookieMap)
     .filter(([, value]) => value !== undefined && value !== null && String(value).length > 0)
@@ -4198,8 +4248,12 @@ async function refreshChatGPTCookies(force = false) {
   }
 }
 
-async function getChatGPTCode(email) {
-  const attempt = async (forceRefresh = false) => {
+async function getChatGPTCode(email, options = {}) {
+  const maxAttempts = Math.max(1, parseInt(options.maxAttempts, 10) || 5);
+  let lastReason = 'Unknown error';
+  let lastStatus = null;
+
+  const attemptRequest = async (forceRefresh = false) => {
     const cookies = await refreshChatGPTCookies(forceRefresh);
     const cookieHeader = buildCookieHeader(cookies);
 
@@ -4208,7 +4262,7 @@ async function getChatGPTCode(email) {
     form.append('email', email);
 
     return axios.post(CHATGPT_POST_URL, form, {
-      timeout: 20000,
+      timeout: 25000,
       maxBodyLength: Infinity,
       headers: {
         ...CHATGPT_HEADERS,
@@ -4219,26 +4273,49 @@ async function getChatGPTCode(email) {
     });
   };
 
-  try {
-    let response = await attempt(false);
-    if (response.status === 403 || response.status === 429) {
-      response = await attempt(true);
-    }
+  for (let attemptIndex = 1; attemptIndex <= maxAttempts; attemptIndex += 1) {
+    try {
+      const response = await attemptRequest(attemptIndex > 1);
+      lastStatus = response.status;
 
-    if (response.status !== 200) {
-      return { success: false, reason: `HTTP ${response.status}` };
-    }
+      if (response.status === 200) {
+        const data = response.data || {};
+        if (data.success === 1 && data.code) {
+          return { success: true, code: data.code, attempts: attemptIndex };
+        }
 
-    const data = response.data || {};
-    if (data.success === 1 && data.code) {
-      return { success: true, code: data.code };
-    }
+        lastReason = String(data.message || data.error || 'Unknown error');
+      } else {
+        const responseBody = response.data;
+        const responseMessage = typeof responseBody === 'string'
+          ? responseBody
+          : responseBody?.message || responseBody?.error || '';
+        lastReason = responseMessage || `HTTP ${response.status}`;
+      }
 
-    return { success: false, reason: data.message || 'Unknown error' };
-  } catch (err) {
-    console.error('ChatGPT API error:', err.response?.data || err.message);
-    return { success: false, reason: err.message || 'Request failed' };
+      if (!shouldRetryChatGptRequest(response.status, lastReason) || attemptIndex >= maxAttempts) {
+        return { success: false, reason: lastReason || `HTTP ${response.status}`, status: response.status, attempts: attemptIndex };
+      }
+
+      const delayMs = getChatGptRetryDelay(attemptIndex);
+      console.warn(`ChatGPT code request retry ${attemptIndex}/${maxAttempts} بسبب: ${lastReason}. Waiting ${delayMs}ms`);
+      await wait(delayMs);
+    } catch (err) {
+      lastReason = err.response?.data?.message || err.message || 'Request failed';
+      lastStatus = err.response?.status || null;
+
+      if (attemptIndex >= maxAttempts) {
+        console.error('ChatGPT API error:', err.response?.data || err.message);
+        return { success: false, reason: lastReason, status: lastStatus, attempts: attemptIndex };
+      }
+
+      const delayMs = getChatGptRetryDelay(attemptIndex);
+      console.warn(`ChatGPT request network retry ${attemptIndex}/${maxAttempts}: ${lastReason}. Waiting ${delayMs}ms`);
+      await wait(delayMs);
+    }
   }
+
+  return { success: false, reason: lastReason || 'Request failed', status: lastStatus, attempts: maxAttempts };
 }
 
 async function getOrCreateChatGptMerchant() {
@@ -4284,24 +4361,35 @@ async function processAutoChatGptCode(userId, options = {}) {
 
   const codes = [];
   let lastFailureReason = null;
+  let consecutiveFailures = 0;
+  const maxConsecutiveFailures = 2;
 
-  for (let i = 0; i < safeQuantity; i += 1) {
+  while (codes.length < safeQuantity) {
     const email = generateRandomEmail();
-    const result = await getChatGPTCode(email);
+    const result = await getChatGPTCode(email, { maxAttempts: 5 });
 
     if (!result.success) {
+      consecutiveFailures += 1;
       lastFailureReason = result.reason || 'Unknown error';
-      if (allowFallbackStock) {
-        const remaining = safeQuantity - codes.length;
-        const fallbackCodes = await takeFallbackChatGptCodesFromReferralStock(userId, remaining);
-        if (fallbackCodes.length > 0) {
-          codes.push(...fallbackCodes);
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        if (allowFallbackStock) {
+          const remaining = safeQuantity - codes.length;
+          const fallbackCodes = await takeFallbackChatGptCodesFromReferralStock(userId, remaining);
+          if (fallbackCodes.length > 0) {
+            codes.push(...fallbackCodes);
+          }
         }
+        break;
       }
-      break;
+      await wait(getChatGptRetryDelay(consecutiveFailures));
+      continue;
     }
 
+    consecutiveFailures = 0;
     codes.push(result.code);
+    if (codes.length < safeQuantity) {
+      await wait(getRandomInt(700, 1500));
+    }
   }
 
   if (codes.length === 0) {
