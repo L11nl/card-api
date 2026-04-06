@@ -3637,6 +3637,7 @@ async function showAdminPanel(userId) {
       [{ text: await getText(userId, 'manageMenuButtons'), callback_data: 'admin_manage_menu_buttons' }],
       [{ text: await getText(userId, 'manageChannel'), callback_data: 'admin_manage_channel' }],
       [{ text: '📦 قناة الكودات الخاصة', callback_data: 'admin_private_codes_channel' }],
+      [{ text: '🌐 بروكسي ChatGPT', callback_data: 'admin_chatgpt_proxies' }],
       [{ text: await getText(userId, 'manageDepositSettings'), callback_data: 'admin_manage_deposit_settings' }],
       [{ text: await getText(userId, 'addMerchant'), callback_data: 'admin_add_merchant' }],
       [{ text: await getText(userId, 'listMerchants'), callback_data: 'admin_list_merchants' }],
@@ -4145,6 +4146,186 @@ async function rejectDeposit(depositId, adminId) {
   return true;
 }
 
+
+async function getChatGptProxyList() {
+  const rawValue = await getGlobalSetting('chatgpt_proxy_list', '[]');
+  try {
+    const parsed = JSON.parse(rawValue);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveChatGptProxyList(proxyList = []) {
+  const cleanList = Array.isArray(proxyList)
+    ? proxyList.map(item => ({
+        id: item.id || crypto.randomBytes(6).toString('hex'),
+        url: String(item.url || '').trim(),
+        enabled: item.enabled !== false,
+        addedAt: item.addedAt || new Date().toISOString()
+      })).filter(item => item.url)
+    : [];
+  await Setting.upsert({
+    key: 'chatgpt_proxy_list',
+    lang: 'global',
+    value: JSON.stringify(cleanList)
+  });
+  return cleanList;
+}
+
+async function getChatGptProxyRotationIndex() {
+  const rawValue = await getGlobalSetting('chatgpt_proxy_rotation_index', '0');
+  const value = parseInt(rawValue, 10);
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+async function setChatGptProxyRotationIndex(index) {
+  await Setting.upsert({
+    key: 'chatgpt_proxy_rotation_index',
+    lang: 'global',
+    value: String(Math.max(0, parseInt(index, 10) || 0))
+  });
+}
+
+function extractProxyCandidates(textValue) {
+  const text = String(textValue || '');
+  const matches = [];
+  const regex = /((?:https?:\/\/)?(?:[^\s:@/]+(?::[^\s@/]+)?@)?(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}):\d{2,5})/ig;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    matches.push(match[1]);
+  }
+  return matches;
+}
+
+function normalizeProxyUrl(rawValue) {
+  let value = String(rawValue || '').trim();
+  if (!value) return '';
+
+  value = value
+    .replace(/[)\],;]+$/g, '')
+    .replace(/\/+$/g, '');
+
+  if (!/^https?:\/\//i.test(value)) {
+    value = `http://${value}`;
+  }
+
+  try {
+    const urlObj = new URL(value);
+    if (!['http:', 'https:'].includes(urlObj.protocol)) return '';
+    if (!urlObj.hostname || !urlObj.port) return '';
+
+    const port = parseInt(urlObj.port, 10);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) return '';
+
+    const authPart = urlObj.username || urlObj.password
+      ? `${encodeURIComponent(decodeURIComponent(urlObj.username || ''))}:${encodeURIComponent(decodeURIComponent(urlObj.password || ''))}@`
+      : '';
+
+    return `${urlObj.protocol}//${authPart}${urlObj.hostname}:${port}`;
+  } catch {
+    return '';
+  }
+}
+
+function parseProxyInput(textValue) {
+  const candidates = extractProxyCandidates(textValue);
+  const normalized = [];
+  const seen = new Set();
+
+  for (const item of candidates) {
+    const proxyUrl = normalizeProxyUrl(item);
+    if (!proxyUrl || seen.has(proxyUrl)) continue;
+    seen.add(proxyUrl);
+    normalized.push({
+      id: crypto.randomBytes(6).toString('hex'),
+      url: proxyUrl,
+      enabled: true,
+      addedAt: new Date().toISOString(),
+      protocol: proxyUrl.startsWith('https://') ? 'https' : 'http'
+    });
+  }
+  return normalized;
+}
+
+function buildAxiosProxyConfig(proxyEntry) {
+  if (!proxyEntry || proxyEntry.type === 'local') return {};
+  try {
+    const parsed = new URL(proxyEntry.url);
+    const config = {
+      protocol: parsed.protocol.replace(':', ''),
+      host: parsed.hostname,
+      port: parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'https:' ? 443 : 80)
+    };
+    if (parsed.username || parsed.password) {
+      config.auth = {
+        username: decodeURIComponent(parsed.username || ''),
+        password: decodeURIComponent(parsed.password || '')
+      };
+    }
+    return { proxy: config };
+  } catch {
+    return {};
+  }
+}
+
+async function getNextChatGptRequestRoute() {
+  const proxies = (await getChatGptProxyList()).filter(item => item.enabled !== false && item.url);
+  if (!proxies.length) {
+    return { type: 'local', label: 'LOCAL', index: 0, total: 1 };
+  }
+
+  const routes = proxies.length === 1
+    ? [{ type: 'local', label: 'LOCAL' }, { type: 'proxy', ...proxies[0] }]
+    : proxies.map(item => ({ type: 'proxy', ...item }));
+
+  const currentIndex = await getChatGptProxyRotationIndex();
+  const safeIndex = routes.length ? (currentIndex % routes.length) : 0;
+  const route = routes[safeIndex];
+  await setChatGptProxyRotationIndex((safeIndex + 1) % routes.length);
+
+  return {
+    ...route,
+    index: safeIndex,
+    total: routes.length,
+    label: route.type === 'local' ? 'LOCAL' : route.url
+  };
+}
+
+async function getChatGptProxySummaryText() {
+  const proxies = await getChatGptProxyList();
+  const enabled = proxies.filter(item => item.enabled !== false && item.url);
+  if (!enabled.length) {
+    return 'لا توجد بروكسيات مضافة. الاستخدام الحالي: السيرفر المحلي فقط.';
+  }
+  const rotation = enabled.length === 1
+    ? 'الوضع الحالي: LOCAL -> PROXY -> LOCAL -> PROXY'
+    : `الوضع الحالي: تدوير دائري على ${enabled.length} بروكسي`;
+  const lines = enabled.slice(0, 20).map((item, idx) => `${idx + 1}. ${item.url}`);
+  if (enabled.length > 20) {
+    lines.push(`... +${enabled.length - 20} more`);
+  }
+  return `${rotation}\n\n${lines.join('\n')}`;
+}
+
+async function showChatGptProxiesAdmin(userId) {
+  const summary = await getChatGptProxySummaryText();
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '➕ اضافة بروكسيات', callback_data: 'admin_add_chatgpt_proxies' }],
+      [{ text: '📋 عرض البروكسيات', callback_data: 'admin_show_chatgpt_proxies' }],
+      [{ text: '🗑️ حذف جميع البروكسيات', callback_data: 'admin_clear_chatgpt_proxies' }],
+      [{ text: '🔙 رجوع', callback_data: 'admin' }]
+    ]
+  };
+  await bot.sendMessage(
+    userId,
+    `🌐 إعدادات بروكسيات ChatGPT\n\n${summary}\n\nيمكنك إضافة بروكسي واحد أو عدة بروكسيات. الصيغ المدعومة:\nhttp://host:port\nhttp://user:pass@host:port\nhttps://host:port`,
+    { reply_markup: keyboard }
+  );
+}
+
 const CHATGPT_PAGE_URL = 'https://www.bbvadescuentos.mx/develop/openai-3msc';
 const CHATGPT_POST_URL = 'https://www.bbvadescuentos.mx/admin-site/php/_httprequest.php';
 const CHATGPT_HEADERS = {
@@ -4178,7 +4359,7 @@ function isChatGptRateLimitReason(value) {
   if (!text) return false;
   return (
     text.includes('has alcanzado el limite de solicitudes') ||
-    text.includes('has alcanzado el límite de solicitudes') ||
+    text.includes('The shit failed (╯︵╰,) ') ||
     text.includes('too many requests') ||
     text.includes('rate limit') ||
     text.includes('limite de solicitudes') ||
@@ -4223,9 +4404,9 @@ function getFallbackChatGptCookies() {
   return fallback;
 }
 
-async function refreshChatGPTCookies(force = false) {
+async function refreshChatGPTCookies(force = false, route = null) {
   const now = Date.now();
-  if (!force && chatGptCookieCache.cookies && now - chatGptCookieCache.fetchedAt < 5 * 60 * 1000) {
+  if (!force && route?.type === 'local' && chatGptCookieCache.cookies && now - chatGptCookieCache.fetchedAt < 5 * 60 * 1000) {
     return chatGptCookieCache.cookies;
   }
 
@@ -4233,7 +4414,8 @@ async function refreshChatGPTCookies(force = false) {
     const response = await axios.get(CHATGPT_PAGE_URL, {
       timeout: 15000,
       headers: CHATGPT_HEADERS,
-      validateStatus: () => true
+      validateStatus: () => true,
+      ...buildAxiosProxyConfig(route)
     });
 
     const cookies = parseSetCookie(response.headers['set-cookie'] || []);
@@ -4253,8 +4435,8 @@ async function getChatGPTCode(email, options = {}) {
   let lastReason = 'Unknown error';
   let lastStatus = null;
 
-  const attemptRequest = async (forceRefresh = false) => {
-    const cookies = await refreshChatGPTCookies(forceRefresh);
+  const attemptRequest = async (route, forceRefresh = false) => {
+    const cookies = await refreshChatGPTCookies(forceRefresh, route);
     const cookieHeader = buildCookieHeader(cookies);
 
     const form = new FormData();
@@ -4269,19 +4451,21 @@ async function getChatGPTCode(email, options = {}) {
         ...form.getHeaders(),
         Cookie: cookieHeader
       },
-      validateStatus: () => true
+      validateStatus: () => true,
+      ...buildAxiosProxyConfig(route)
     });
   };
 
   for (let attemptIndex = 1; attemptIndex <= maxAttempts; attemptIndex += 1) {
+    const route = await getNextChatGptRequestRoute();
     try {
-      const response = await attemptRequest(attemptIndex > 1);
+      const response = await attemptRequest(route, attemptIndex > 1 || shouldRefreshCookiesForStatus(lastStatus));
       lastStatus = response.status;
 
       if (response.status === 200) {
         const data = response.data || {};
         if (data.success === 1 && data.code) {
-          return { success: true, code: data.code, attempts: attemptIndex };
+          return { success: true, code: data.code, attempts: attemptIndex, route: route.label };
         }
 
         lastReason = String(data.message || data.error || 'Unknown error');
@@ -4294,11 +4478,17 @@ async function getChatGPTCode(email, options = {}) {
       }
 
       if (!shouldRetryChatGptRequest(response.status, lastReason) || attemptIndex >= maxAttempts) {
-        return { success: false, reason: lastReason || `HTTP ${response.status}`, status: response.status, attempts: attemptIndex };
+        return {
+          success: false,
+          reason: lastReason || `HTTP ${response.status}`,
+          status: response.status,
+          attempts: attemptIndex,
+          route: route.label
+        };
       }
 
       const delayMs = getChatGptRetryDelay(attemptIndex);
-      console.warn(`ChatGPT code request retry ${attemptIndex}/${maxAttempts} بسبب: ${lastReason}. Waiting ${delayMs}ms`);
+      console.warn(`ChatGPT code request retry ${attemptIndex}/${maxAttempts} via ${route.label} بسبب: ${lastReason}. Waiting ${delayMs}ms`);
       await wait(delayMs);
     } catch (err) {
       lastReason = err.response?.data?.message || err.message || 'Request failed';
@@ -4306,11 +4496,11 @@ async function getChatGPTCode(email, options = {}) {
 
       if (attemptIndex >= maxAttempts) {
         console.error('ChatGPT API error:', err.response?.data || err.message);
-        return { success: false, reason: lastReason, status: lastStatus, attempts: attemptIndex };
+        return { success: false, reason: lastReason, status: lastStatus, attempts: attemptIndex, route: route.label };
       }
 
       const delayMs = getChatGptRetryDelay(attemptIndex);
-      console.warn(`ChatGPT request network retry ${attemptIndex}/${maxAttempts}: ${lastReason}. Waiting ${delayMs}ms`);
+      console.warn(`ChatGPT request network retry ${attemptIndex}/${maxAttempts} via ${route.label}: ${lastReason}. Waiting ${delayMs}ms`);
       await wait(delayMs);
     }
   }
@@ -4617,6 +4807,42 @@ bot.on('callback_query', async query => {
 
     if (data === 'admin_private_codes_channel' && isAdmin(userId)) {
       await showPrivateCodesChannelAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_chatgpt_proxies' && isAdmin(userId)) {
+      await clearUserState(userId);
+      await showChatGptProxiesAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_show_chatgpt_proxies' && isAdmin(userId)) {
+      await clearUserState(userId);
+      await showChatGptProxiesAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_add_chatgpt_proxies' && isAdmin(userId)) {
+      await setUserState(userId, { action: 'add_chatgpt_proxies' });
+      await bot.sendMessage(userId, `أرسل بروكسي واحد أو عدة بروكسيات. يمكنك إرسالها كسطور مباشرة أو لصق قائمة كاملة مثل Proxy list light وسيتم استخراج البروكسيات تلقائياً.
+
+أمثلة مدعومة:
+103.178.23.6:8080
+http://103.178.23.6:8080/
+http://user:pass@host:port
+https://user:pass@host:port`);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_clear_chatgpt_proxies' && isAdmin(userId)) {
+      await saveChatGptProxyList([]);
+      await setChatGptProxyRotationIndex(0);
+      await bot.sendMessage(userId, '✅ تم حذف جميع بروكسيات ChatGPT والعودة إلى السيرفر المحلي فقط.');
+      await showChatGptProxiesAdmin(userId);
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -5895,6 +6121,31 @@ bot.on('message', async msg => {
     }
 
     if (state && isAdmin(userId)) {
+      if (state.action === 'add_chatgpt_proxies') {
+        const newItems = parseProxyInput(text || '');
+        if (!newItems.length) {
+          await bot.sendMessage(userId, '❌ لم يتم التعرف على أي بروكسي صالح. الصيغ المدعومة فعلياً: host:port أو http://host:port أو https://host:port أو بصيغة user:pass@host:port. ويمكنك أيضاً لصق قائمة Proxy list كاملة وسيتم استخراج البروكسيات منها تلقائياً.');
+          return;
+        }
+
+        const current = await getChatGptProxyList();
+        const existing = new Set(current.map(item => String(item.url || '').trim()));
+        const merged = [...current];
+        let addedCount = 0;
+        for (const item of newItems) {
+          if (existing.has(item.url)) continue;
+          existing.add(item.url);
+          merged.push(item);
+          addedCount += 1;
+        }
+
+        await saveChatGptProxyList(merged);
+        await clearUserState(userId);
+        await bot.sendMessage(userId, `✅ تم حفظ ${addedCount} بروكسي جديد. إجمالي البروكسيات الآن: ${merged.filter(item => item.enabled !== false).length}`);
+        await showChatGptProxiesAdmin(userId);
+        return;
+      }
+
       if (state.action === 'set_private_codes_channel') {
         let resolved = null;
         const existingCfg = await getPrivateCodesChannelConfig();
