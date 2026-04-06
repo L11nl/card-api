@@ -868,6 +868,13 @@ function generateRandomEmail() {
   return `${localPart}@gmail.com`;
 }
 
+function normalizeNumericInput(value) {
+  return String(value || '')
+    .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .trim();
+}
+
 async function getText(userId, key, replacements = {}) {
   try {
     const user = await User.findByPk(userId);
@@ -4359,7 +4366,7 @@ function isChatGptRateLimitReason(value) {
   if (!text) return false;
   return (
     text.includes('has alcanzado el limite de solicitudes') ||
-    text.includes('The shit failed (╯︵╰,) ') ||
+    text.includes('has alcanzado el límite de solicitudes') ||
     text.includes('too many requests') ||
     text.includes('rate limit') ||
     text.includes('limite de solicitudes') ||
@@ -4412,7 +4419,7 @@ async function refreshChatGPTCookies(force = false, route = null) {
 
   try {
     const response = await axios.get(CHATGPT_PAGE_URL, {
-      timeout: 15000,
+      timeout: 10000,
       headers: CHATGPT_HEADERS,
       validateStatus: () => true,
       ...buildAxiosProxyConfig(route)
@@ -4432,6 +4439,7 @@ async function refreshChatGPTCookies(force = false, route = null) {
 
 async function getChatGPTCode(email, options = {}) {
   const maxAttempts = Math.max(1, parseInt(options.maxAttempts, 10) || 5);
+  const requestTimeout = Math.max(5000, parseInt(options.timeoutMs, 10) || 15000);
   let lastReason = 'Unknown error';
   let lastStatus = null;
 
@@ -4444,7 +4452,7 @@ async function getChatGPTCode(email, options = {}) {
     form.append('email', email);
 
     return axios.post(CHATGPT_POST_URL, form, {
-      timeout: 25000,
+      timeout: requestTimeout,
       maxBodyLength: Infinity,
       headers: {
         ...CHATGPT_HEADERS,
@@ -4526,6 +4534,9 @@ async function getOrCreateChatGptMerchant() {
 async function processAutoChatGptCode(userId, options = {}) {
   const { isFree = false, fromPoints = false, quantity = 1, allowFallbackStock = true } = options;
   const safeQuantity = Math.max(1, parseInt(quantity, 10) || 1);
+  const startedAt = Date.now();
+  const maxRuntimeMs = Math.min(120000, Math.max(45000, safeQuantity * 7000));
+  const deadlineAt = startedAt + maxRuntimeMs;
   let merchant = null;
   let currentBalance = 0;
   let price = 0;
@@ -4555,8 +4566,18 @@ async function processAutoChatGptCode(userId, options = {}) {
   const maxConsecutiveFailures = 2;
 
   while (codes.length < safeQuantity) {
+    if (Date.now() >= deadlineAt) {
+      lastFailureReason = lastFailureReason || 'Timed out while generating codes';
+      break;
+    }
+
     const email = generateRandomEmail();
-    const result = await getChatGPTCode(email, { maxAttempts: 5 });
+    const remainingMs = Math.max(5000, deadlineAt - Date.now());
+    const requestAttempts = safeQuantity <= 3 ? 3 : 2;
+    const result = await getChatGPTCode(email, {
+      maxAttempts: requestAttempts,
+      timeoutMs: Math.min(15000, remainingMs)
+    });
 
     if (!result.success) {
       consecutiveFailures += 1;
@@ -4571,19 +4592,29 @@ async function processAutoChatGptCode(userId, options = {}) {
         }
         break;
       }
-      await wait(getChatGptRetryDelay(consecutiveFailures));
+      const retryDelay = Math.min(getChatGptRetryDelay(consecutiveFailures), Math.max(0, deadlineAt - Date.now()));
+      if (retryDelay > 0) {
+        await wait(retryDelay);
+      }
       continue;
     }
 
     consecutiveFailures = 0;
     codes.push(result.code);
     if (codes.length < safeQuantity) {
-      await wait(getRandomInt(700, 1500));
+      const pauseMs = Math.min(getRandomInt(700, 1500), Math.max(0, deadlineAt - Date.now()));
+      if (pauseMs > 0) {
+        await wait(pauseMs);
+      }
     }
   }
 
   if (codes.length === 0) {
-    return { success: false, reason: lastFailureReason || 'No codes were generated' };
+    return {
+      success: false,
+      reason: lastFailureReason || 'No codes were generated',
+      timedOut: Date.now() >= deadlineAt
+    };
   }
 
   if (isFree) {
@@ -4606,6 +4637,7 @@ async function processAutoChatGptCode(userId, options = {}) {
     quantity: codes.length,
     requestedQuantity: safeQuantity,
     partial: codes.length !== safeQuantity,
+    timedOut: Date.now() >= deadlineAt,
     price: price.toFixed(2),
     totalCost: (price * codes.length).toFixed(2)
   };
@@ -7507,7 +7539,7 @@ bot.on('message', async msg => {
     }
 
     if (state?.action === 'buy') {
-      const qty = parseInt(text, 10);
+      const qty = parseInt(normalizeNumericInput(text), 10);
       if (Number.isNaN(qty) || qty <= 0) {
         await bot.sendMessage(userId, '❌ Invalid quantity.');
         return;
@@ -7750,7 +7782,7 @@ bot.on('message', async msg => {
 
     if (state?.action === 'redeem_points_amount') {
       const requiredPoints = await getEffectiveRedeemPointsForUser(userId);
-      const requestedCodes = parseInt(String(text || '').trim(), 10);
+      const requestedCodes = parseInt(normalizeNumericInput(text), 10);
 
       if (Number.isNaN(requestedCodes) || requestedCodes <= 0) {
         await bot.sendMessage(userId, await getText(userId, 'redeemPointsInvalidAmount', { requiredPoints }));
@@ -7795,7 +7827,7 @@ bot.on('message', async msg => {
     }
 
     if (state?.action === 'chatgpt_buy_quantity') {
-      const qty = parseInt(text, 10);
+      const qty = parseInt(normalizeNumericInput(text), 10);
       if (Number.isNaN(qty) || qty <= 0 || qty > 70) {
         await bot.sendMessage(userId, await getText(userId, 'invalidQuantity'));
         return;
@@ -7810,7 +7842,7 @@ bot.on('message', async msg => {
         if (result.partial) {
           successText += `
 
-⚠️ Requested: ${result.requestedQuantity} | Delivered: ${result.quantity}`;
+⚠️ Requested: ${result.requestedQuantity} | Delivered: ${result.quantity}${result.timedOut ? ' | السبب: انتهت مهلة التوليد وتم تسليم المتوفر فقط' : ''}`;
         }
         {
         const deliveryPrefix = await getCodeDeliveryPrefixHtml(userId);
@@ -7841,7 +7873,7 @@ bot.on('message', async msg => {
             if (result.partial) {
               successText += `
 
-⚠️ Requested: ${qty} | Delivered: ${result.quantity}`;
+⚠️ Requested: ${qty} | Delivered: ${result.quantity}${result.timedOut ? ' | السبب: انتهت مهلة التوليد وتم تسليم المتوفر فقط' : ''}`;
             }
             const deliveryPrefix = await getCodeDeliveryPrefixHtml(userId);
             await bot.sendMessage(userId, `${deliveryPrefix}${successText}`, { parse_mode: 'HTML' });
