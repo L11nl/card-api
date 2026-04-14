@@ -456,7 +456,7 @@ const DEFAULT_TEXTS = {
     depositNow: '💳 Deposit Balance',
     bulkDiscountInfo: '🔥 Quantity discount: if you buy {threshold} codes or more, the price becomes {price} USD per code.',
     referralMilestoneBonus: '🎁 Referral milestone reached! You received {bonus} bonus points. Total points: {points}',
-    invalidQuantity: '❌ Invalid quantity. Please send a valid positive number. Maximum allowed is 70 codes per request.',
+    invalidQuantity: '❌ Invalid quantity. Please send a valid positive number. Maximum allowed is 100 codes per request.',
     mustJoinChannel: '🔒 Please join our channel first\n\n{message}\n\nThen press the check button.',
     joinChannel: '📢 Join Channel',
     checkSubscription: '🔄 Check Subscription',
@@ -776,7 +776,7 @@ const DEFAULT_TEXTS = {
     depositNow: '💳 شحن الرصيد',
     bulkDiscountInfo: '🔥 خصم على الكمية: إذا اشتريت {threshold} كودًا أو أكثر يصبح سعر الكود الواحد {price} دولار.',
     referralMilestoneBonus: '🎁 تم تحقيق مستوى إحالة جديد! حصلت على {bonus} نقاط إضافية. مجموع نقاطك الآن: {points}',
-    invalidQuantity: '❌ كمية غير صالحة. يرجى إرسال رقمًا موجبًا صحيحًا. الحد الأقصى 70 كود في الطلب الواحد.',
+    invalidQuantity: '❌ كمية غير صالحة. يرجى إرسال رقمًا موجبًا صحيحًا. الحد الأقصى 100 كود في الطلب الواحد.',
     mustJoinChannel: '🔒 يرجى الاشتراك في القناة أولاً\n\n{message}\n\nثم اضغط زر التحقق.',
     joinChannel: '📢 اشترك الآن',
     checkSubscription: '🔄 تحقق من الاشتراك',
@@ -1844,15 +1844,19 @@ async function showPrivateCodesChannelAdmin(userId) {
 }
 
 async function generateChatGptCodesFromSite(quantity = 100) {
-  const requestedQuantity = Math.max(1, parseInt(quantity, 10) || 100);
+  const requestedQuantity = Math.max(1, Math.min(100, parseInt(quantity, 10) || 100));
   const codes = [];
   let lastFailureReason = '';
   let consecutiveFailures = 0;
-  const maxConsecutiveFailures = 3;
+  const maxConsecutiveFailures = requestedQuantity >= 20 ? 5 : 3;
 
   while (codes.length < requestedQuantity) {
     const email = generateRandomEmail();
-    const result = await getChatGPTCode(email, { maxAttempts: 5 });
+    const result = await getChatGPTCode(email, {
+      maxAttempts: 5,
+      timeoutMs: 20000,
+      forceRefreshCookies: true
+    });
 
     if (!result.success) {
       consecutiveFailures += 1;
@@ -1873,7 +1877,7 @@ async function generateChatGptCodesFromSite(quantity = 100) {
 
     codes.push(normalized);
     if (codes.length < requestedQuantity) {
-      await wait(getRandomInt(700, 1500));
+      await wait(getRandomInt(1200, 2500));
     }
   }
 
@@ -4440,6 +4444,7 @@ async function refreshChatGPTCookies(force = false, route = null) {
 async function getChatGPTCode(email, options = {}) {
   const maxAttempts = Math.max(1, parseInt(options.maxAttempts, 10) || 5);
   const requestTimeout = Math.max(5000, parseInt(options.timeoutMs, 10) || 15000);
+  const forceRefreshCookies = options.forceRefreshCookies === true;
   let lastReason = 'Unknown error';
   let lastStatus = null;
 
@@ -4467,7 +4472,10 @@ async function getChatGPTCode(email, options = {}) {
   for (let attemptIndex = 1; attemptIndex <= maxAttempts; attemptIndex += 1) {
     const route = await getNextChatGptRequestRoute();
     try {
-      const response = await attemptRequest(route, attemptIndex > 1 || shouldRefreshCookiesForStatus(lastStatus));
+      const response = await attemptRequest(
+        route,
+        forceRefreshCookies || attemptIndex > 1 || shouldRefreshCookiesForStatus(lastStatus)
+      );
       lastStatus = response.status;
 
       if (response.status === 200) {
@@ -4533,9 +4541,9 @@ async function getOrCreateChatGptMerchant() {
 
 async function processAutoChatGptCode(userId, options = {}) {
   const { isFree = false, fromPoints = false, quantity = 1, allowFallbackStock = true } = options;
-  const safeQuantity = Math.max(1, parseInt(quantity, 10) || 1);
+  const safeQuantity = Math.max(1, Math.min(100, parseInt(quantity, 10) || 1));
   const startedAt = Date.now();
-  const maxRuntimeMs = Math.min(120000, Math.max(45000, safeQuantity * 7000));
+  const maxRuntimeMs = Math.min(900000, Math.max(60000, safeQuantity * 12000));
   const deadlineAt = startedAt + maxRuntimeMs;
   let merchant = null;
   let currentBalance = 0;
@@ -4563,7 +4571,7 @@ async function processAutoChatGptCode(userId, options = {}) {
   const codes = [];
   let lastFailureReason = null;
   let consecutiveFailures = 0;
-  const maxConsecutiveFailures = 2;
+  const maxConsecutiveFailures = safeQuantity >= 20 ? 5 : 3;
 
   while (codes.length < safeQuantity) {
     if (Date.now() >= deadlineAt) {
@@ -4576,7 +4584,8 @@ async function processAutoChatGptCode(userId, options = {}) {
     const requestAttempts = safeQuantity <= 3 ? 3 : 2;
     const result = await getChatGPTCode(email, {
       maxAttempts: requestAttempts,
-      timeoutMs: Math.min(15000, remainingMs)
+      timeoutMs: Math.min(20000, remainingMs),
+      forceRefreshCookies: true
     });
 
     if (!result.success) {
@@ -4602,7 +4611,7 @@ async function processAutoChatGptCode(userId, options = {}) {
     consecutiveFailures = 0;
     codes.push(result.code);
     if (codes.length < safeQuantity) {
-      const pauseMs = Math.min(getRandomInt(700, 1500), Math.max(0, deadlineAt - Date.now()));
+      const pauseMs = Math.min(getRandomInt(1200, 2500), Math.max(0, deadlineAt - Date.now()));
       if (pauseMs > 0) {
         await wait(pauseMs);
       }
@@ -7828,7 +7837,7 @@ bot.on('message', async msg => {
 
     if (state?.action === 'chatgpt_buy_quantity') {
       const qty = parseInt(normalizeNumericInput(text), 10);
-      if (Number.isNaN(qty) || qty <= 0 || qty > 70) {
+      if (Number.isNaN(qty) || qty <= 0 || qty > 100) {
         await bot.sendMessage(userId, await getText(userId, 'invalidQuantity'));
         return;
       }
