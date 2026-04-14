@@ -7,6 +7,15 @@ const FormData = require('form-data');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const crypto = require('crypto');
 
+function getSocksProxyAgentClass() {
+  try {
+    return require('socks-proxy-agent').SocksProxyAgent;
+  } catch (err) {
+    console.error('socks-proxy-agent is not installed:', err.message);
+    return null;
+  }
+}
+
 const TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -446,7 +455,7 @@ const DEFAULT_TEXTS = {
     currentCreatorDiscount: 'Your creator discount: {percent}%',
     manageReferralSettingsText: '👥 Referral Settings\n\n{percentLine}\n{pointsLine}\n{freeCodeDaysLine}\n{milestonesLine}\n{referralsStatusLine}',
     chatgptCode: '🤖 ChatGPT Code',
-    askEmail: '❌ Invalid email. Please enter a valid email address:',
+    askEmail: 'Please enter your email address:',
     freeCodeSuccess: '🎉 Here is your free ChatGPT GO code:\n\n{code}',
     alreadyGotFree: 'You have already received your free code. You can purchase more codes.',
     askQuantity: 'How many ChatGPT codes would you like to buy? Send the number only.\n\n🔥 Quantity discount: if you buy 20 codes or more, the price becomes 1 USD per code.',
@@ -766,7 +775,7 @@ const DEFAULT_TEXTS = {
     currentCreatorDiscount: 'خصم صانع المحتوى الخاص بك: {percent}%',
     manageReferralSettingsText: '👥 إعدادات الإحالة\n\n{percentLine}\n{pointsLine}\n{freeCodeDaysLine}\n{milestonesLine}\n{referralsStatusLine}',
     chatgptCode: '🤖 كود ChatGPT',
-    askEmail: '❌ الإيميل غير صالح. يرجى إدخال بريد إلكتروني صحيح:',
+    askEmail: 'يرجى إدخال بريدك الإلكتروني:',
     freeCodeSuccess: '🎉 إليك كود ChatGPT GO المجاني:\n\n{code}',
     alreadyGotFree: 'لقد حصلت بالفعل على كودك المجاني. يمكنك شراء أكواد إضافية.',
     askQuantity: 'كم عدد أكواد ChatGPT التي تريد شراءها؟ أرسل الرقم فقط.\n\n🔥 خصم على الكمية: إذا اشتريت 20 كودًا أو أكثر يصبح سعر الكود الواحد 1 دولار.',
@@ -866,27 +875,6 @@ function generateRandomEmail() {
     localPart += chars[Math.floor(Math.random() * chars.length)];
   }
   return `${localPart}@gmail.com`;
-}
-
-
-function isValidEmailAddress(value) {
-  const email = String(value || '').trim();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function buildChatGptRequestEmail(baseEmail, index = 0) {
-  const fallback = generateRandomEmail();
-  const email = String(baseEmail || '').trim();
-  if (!isValidEmailAddress(email)) return fallback;
-
-  const atIndex = email.indexOf('@');
-  if (atIndex <= 0) return fallback;
-
-  const localPart = email.slice(0, atIndex);
-  const domainPart = email.slice(atIndex + 1);
-  const safeLocal = localPart.replace(/\+.*/, '');
-  const suffix = `${Date.now()}${index}`;
-  return `${safeLocal}+cg${suffix}@${domainPart}`;
 }
 
 function normalizeNumericInput(value) {
@@ -4222,13 +4210,19 @@ async function setChatGptProxyRotationIndex(index) {
 
 function extractProxyCandidates(textValue) {
   const text = String(textValue || '');
+  const lines = text
+    .split(/\r?\n/)
+    .map(line => String(line || '').trim())
+    .filter(Boolean);
+
   const matches = [];
   const regex = /((?:https?:\/\/)?(?:[^\s:@/]+(?::[^\s@/]+)?@)?(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}):\d{2,5})/ig;
   let match;
   while ((match = regex.exec(text)) !== null) {
     matches.push(match[1]);
   }
-  return matches;
+
+  return { lines, matches };
 }
 
 function normalizeProxyUrl(rawValue) {
@@ -4261,28 +4255,143 @@ function normalizeProxyUrl(rawValue) {
   }
 }
 
+function normalizeRuntimeProxyEntry(entry = {}) {
+  const protocol = String(entry.protocol || 'http').trim().toLowerCase();
+  const host = String(entry.host || '').trim();
+  const port = parseInt(entry.port, 10);
+  const username = String(entry.username || '').trim();
+  const password = String(entry.password || '').trim();
+  const onSeconds = Math.max(1, parseInt(entry.onSeconds, 10) || 5);
+  const offSeconds = Math.max(1, parseInt(entry.offSeconds, 10) || 5);
+
+  if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return null;
+
+  let url = '';
+  if (['http', 'https'].includes(protocol)) {
+    const authPart = username
+      ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`
+      : '';
+    url = `${protocol}://${authPart}${host}:${port}`;
+  } else if (['socks5', 'socks4'].includes(protocol)) {
+    const authPart = username
+      ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`
+      : '';
+    url = `${protocol}://${authPart}${host}:${port}`;
+  } else {
+    return null;
+  }
+
+  return {
+    id: entry.id || crypto.randomBytes(6).toString('hex'),
+    url,
+    enabled: entry.enabled !== false,
+    addedAt: entry.addedAt || new Date().toISOString(),
+    protocol,
+    host,
+    port,
+    username,
+    password,
+    onSeconds,
+    offSeconds
+  };
+}
+
+function parsePipeProxyLine(line) {
+  const parts = String(line || '').split('|').map(v => String(v || '').trim());
+  if (parts.length < 5) return null;
+
+  const [protocolRaw, host, portRaw, username, password, onRaw = '5', offRaw = '5'] = parts;
+  const protocol = String(protocolRaw || '').toLowerCase();
+  if (!['http', 'https', 'socks5', 'socks4'].includes(protocol)) return null;
+
+  const port = parseInt(portRaw, 10);
+  const onSeconds = Math.max(1, parseInt(onRaw, 10) || 5);
+  const offSeconds = Math.max(1, parseInt(offRaw, 10) || 5);
+
+  return normalizeRuntimeProxyEntry({
+    protocol,
+    host,
+    port,
+    username,
+    password,
+    onSeconds,
+    offSeconds
+  });
+}
+
 function parseProxyInput(textValue) {
-  const candidates = extractProxyCandidates(textValue);
+  const { lines, matches } = extractProxyCandidates(textValue);
   const normalized = [];
   const seen = new Set();
 
-  for (const item of candidates) {
+  for (const line of lines) {
+    const pipeProxy = parsePipeProxyLine(line);
+    if (!pipeProxy) continue;
+    const key = `${pipeProxy.protocol}|${pipeProxy.host}|${pipeProxy.port}|${pipeProxy.username}|${pipeProxy.password}|${pipeProxy.onSeconds}|${pipeProxy.offSeconds}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(pipeProxy);
+  }
+
+  for (const item of matches) {
     const proxyUrl = normalizeProxyUrl(item);
     if (!proxyUrl || seen.has(proxyUrl)) continue;
     seen.add(proxyUrl);
-    normalized.push({
-      id: crypto.randomBytes(6).toString('hex'),
+
+    let parsedProtocol = 'http';
+    let host = '';
+    let port = 0;
+    let username = '';
+    let password = '';
+
+    try {
+      const parsed = new URL(proxyUrl);
+      parsedProtocol = parsed.protocol.replace(':', '');
+      host = parsed.hostname;
+      port = parseInt(parsed.port, 10);
+      username = decodeURIComponent(parsed.username || '');
+      password = decodeURIComponent(parsed.password || '');
+    } catch {}
+
+    const normalizedEntry = normalizeRuntimeProxyEntry({
       url: proxyUrl,
-      enabled: true,
-      addedAt: new Date().toISOString(),
-      protocol: proxyUrl.startsWith('https://') ? 'https' : 'http'
+      protocol: parsedProtocol,
+      host,
+      port,
+      username,
+      password,
+      onSeconds: 5,
+      offSeconds: 5
     });
+
+    if (normalizedEntry) normalized.push(normalizedEntry);
   }
+
   return normalized;
 }
 
 function buildAxiosProxyConfig(proxyEntry) {
   if (!proxyEntry || proxyEntry.type === 'local') return {};
+
+  const protocol = String(proxyEntry.protocol || '').toLowerCase();
+  if (protocol === 'socks5' || protocol === 'socks4') {
+    const SocksProxyAgent = getSocksProxyAgentClass();
+    if (!SocksProxyAgent) {
+      throw new Error('socks-proxy-agent package is required for SOCKS proxies');
+    }
+
+    const authPart = proxyEntry.username
+      ? `${encodeURIComponent(proxyEntry.username)}:${encodeURIComponent(proxyEntry.password || '')}@`
+      : '';
+    const proxyUrl = `${protocol}://${authPart}${proxyEntry.host}:${proxyEntry.port}`;
+    const agent = new SocksProxyAgent(proxyUrl);
+    return {
+      httpAgent: agent,
+      httpsAgent: agent,
+      proxy: false
+    };
+  }
+
   try {
     const parsed = new URL(proxyEntry.url);
     const config = {
@@ -4302,26 +4411,40 @@ function buildAxiosProxyConfig(proxyEntry) {
   }
 }
 
+function getTimedProxyMode(proxyEntry) {
+  if (!proxyEntry || proxyEntry.type === 'local') return true;
+  const onSeconds = Math.max(1, parseInt(proxyEntry.onSeconds, 10) || 5);
+  const offSeconds = Math.max(1, parseInt(proxyEntry.offSeconds, 10) || 5);
+  const cycle = onSeconds + offSeconds;
+  const currentSecond = Math.floor(Date.now() / 1000) % cycle;
+  return currentSecond < onSeconds;
+}
+
 async function getNextChatGptRequestRoute() {
   const proxies = (await getChatGptProxyList()).filter(item => item.enabled !== false && item.url);
   if (!proxies.length) {
     return { type: 'local', label: 'LOCAL', index: 0, total: 1 };
   }
 
-  const routes = proxies.length === 1
-    ? [{ type: 'local', label: 'LOCAL' }, { type: 'proxy', ...proxies[0] }]
-    : proxies.map(item => ({ type: 'proxy', ...item }));
+  if (proxies.length === 1) {
+    const proxyEntry = proxies[0];
+    const proxyEnabledNow = getTimedProxyMode(proxyEntry);
+    return proxyEnabledNow
+      ? { ...proxyEntry, type: 'proxy', index: 0, total: 1, label: proxyEntry.url }
+      : { type: 'local', label: 'LOCAL', index: 0, total: 1 };
+  }
 
   const currentIndex = await getChatGptProxyRotationIndex();
-  const safeIndex = routes.length ? (currentIndex % routes.length) : 0;
-  const route = routes[safeIndex];
-  await setChatGptProxyRotationIndex((safeIndex + 1) % routes.length);
+  const safeIndex = currentIndex % proxies.length;
+  const route = proxies[safeIndex];
+  await setChatGptProxyRotationIndex((safeIndex + 1) % proxies.length);
 
   return {
     ...route,
+    type: 'proxy',
     index: safeIndex,
-    total: routes.length,
-    label: route.type === 'local' ? 'LOCAL' : route.url
+    total: proxies.length,
+    label: route.url
   };
 }
 
@@ -4331,14 +4454,25 @@ async function getChatGptProxySummaryText() {
   if (!enabled.length) {
     return 'لا توجد بروكسيات مضافة. الاستخدام الحالي: السيرفر المحلي فقط.';
   }
-  const rotation = enabled.length === 1
-    ? 'الوضع الحالي: LOCAL -> PROXY -> LOCAL -> PROXY'
-    : `الوضع الحالي: تدوير دائري على ${enabled.length} بروكسي`;
-  const lines = enabled.slice(0, 20).map((item, idx) => `${idx + 1}. ${item.url}`);
+
+  const lines = enabled.slice(0, 20).map((item, idx) => {
+    const modeText = enabled.length === 1
+      ? `ON ${Math.max(1, parseInt(item.onSeconds, 10) || 5)}s / OFF ${Math.max(1, parseInt(item.offSeconds, 10) || 5)}s`
+      : 'Rotation';
+    return `${idx + 1}. [${String(item.protocol || 'http').toUpperCase()}] ${item.url} | ${modeText}`;
+  });
+
   if (enabled.length > 20) {
     lines.push(`... +${enabled.length - 20} more`);
   }
-  return `${rotation}\n\n${lines.join('\n')}`;
+
+  const rotation = enabled.length === 1
+    ? 'الوضع الحالي: البروكسي يشتغل ويقف تلقائياً حسب الثواني المحددة.'
+    : `الوضع الحالي: تدوير دائري على ${enabled.length} بروكسي`;
+
+  return `${rotation}
+
+${lines.join('\n')}`;
 }
 
 async function showChatGptProxiesAdmin(userId) {
@@ -4353,7 +4487,21 @@ async function showChatGptProxiesAdmin(userId) {
   };
   await bot.sendMessage(
     userId,
-    `🌐 إعدادات بروكسيات ChatGPT\n\n${summary}\n\nيمكنك إضافة بروكسي واحد أو عدة بروكسيات. الصيغ المدعومة:\nhttp://host:port\nhttp://user:pass@host:port\nhttps://host:port`,
+    `🌐 إعدادات بروكسيات ChatGPT
+
+${summary}
+
+يمكنك إضافة بروكسي واحد أو عدة بروكسيات.
+
+الصيغ المدعومة:
+http://host:port
+http://user:pass@host:port
+https://host:port
+
+ولبروكسي SOCKS أو بروكسي بتشغيل/إيقاف تلقائي أرسل هكذا:
+socks5|host|port|username|password|5|5
+
+المعنى: 5 ثواني تشغيل ثم 5 ثواني إيقاف ثم يعاود تلقائياً.`,
     { reply_markup: keyboard }
   );
 }
@@ -4561,13 +4709,7 @@ async function getOrCreateChatGptMerchant() {
 }
 
 async function processAutoChatGptCode(userId, options = {}) {
-  const {
-    isFree = false,
-    fromPoints = false,
-    quantity = 1,
-    allowFallbackStock = true,
-    baseEmail = ''
-  } = options;
+  const { isFree = false, fromPoints = false, quantity = 1, allowFallbackStock = true } = options;
   const safeQuantity = Math.max(1, Math.min(100, parseInt(quantity, 10) || 1));
   const startedAt = Date.now();
   const maxRuntimeMs = Math.min(900000, Math.max(60000, safeQuantity * 12000));
@@ -4606,9 +4748,7 @@ async function processAutoChatGptCode(userId, options = {}) {
       break;
     }
 
-    await refreshChatGPTCookies(true);
-
-    const email = buildChatGptRequestEmail(baseEmail, codes.length + consecutiveFailures + 1);
+    const email = generateRandomEmail();
     const remainingMs = Math.max(5000, deadlineAt - Date.now());
     const requestAttempts = safeQuantity <= 3 ? 3 : 2;
     const result = await getChatGPTCode(email, {
@@ -4620,9 +4760,6 @@ async function processAutoChatGptCode(userId, options = {}) {
     if (!result.success) {
       consecutiveFailures += 1;
       lastFailureReason = result.reason || 'Unknown error';
-
-      await refreshChatGPTCookies(true).catch(() => {});
-
       if (consecutiveFailures >= maxConsecutiveFailures) {
         if (allowFallbackStock) {
           const remaining = safeQuantity - codes.length;
@@ -4642,9 +4779,6 @@ async function processAutoChatGptCode(userId, options = {}) {
 
     consecutiveFailures = 0;
     codes.push(result.code);
-
-    await refreshChatGPTCookies(true).catch(() => {});
-
     if (codes.length < safeQuantity) {
       const pauseMs = Math.min(getRandomInt(1200, 2500), Math.max(0, deadlineAt - Date.now()));
       if (pauseMs > 0) {
@@ -4903,13 +5037,18 @@ bot.on('callback_query', async query => {
 
     if (data === 'admin_add_chatgpt_proxies' && isAdmin(userId)) {
       await setUserState(userId, { action: 'add_chatgpt_proxies' });
-      await bot.sendMessage(userId, `أرسل بروكسي واحد أو عدة بروكسيات. يمكنك إرسالها كسطور مباشرة أو لصق قائمة كاملة مثل Proxy list light وسيتم استخراج البروكسيات تلقائياً.
+      await bot.sendMessage(userId, `أرسل بروكسي واحد أو عدة بروكسيات. يمكنك إرسالها كسطور مباشرة أو لصق قائمة كاملة وسيتم استخراج البروكسيات تلقائياً.
 
 أمثلة مدعومة:
 103.178.23.6:8080
 http://103.178.23.6:8080/
 http://user:pass@host:port
-https://user:pass@host:port`);
+https://user:pass@host:port
+
+ولبروكسي SOCKS5 بصيغة داخل البوت:
+socks5|p.webshare.io|9999|USERNAME|PASSWORD|5|5
+
+آخر رقمين معناهما: 5 ثواني تشغيل ثم 5 ثواني إيقاف.`);
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -6200,7 +6339,7 @@ bot.on('message', async msg => {
       if (state.action === 'add_chatgpt_proxies') {
         const newItems = parseProxyInput(text || '');
         if (!newItems.length) {
-          await bot.sendMessage(userId, '❌ لم يتم التعرف على أي بروكسي صالح. الصيغ المدعومة فعلياً: host:port أو http://host:port أو https://host:port أو بصيغة user:pass@host:port. ويمكنك أيضاً لصق قائمة Proxy list كاملة وسيتم استخراج البروكسيات منها تلقائياً.');
+          await bot.sendMessage(userId, '❌ لم يتم التعرف على أي بروكسي صالح. الصيغ المدعومة: host:port أو http://host:port أو https://host:port أو user:pass@host:port أو socks5|host|port|username|password|5|5');
           return;
         }
 
@@ -7877,25 +8016,8 @@ bot.on('message', async msg => {
         return;
       }
 
-      await setUserState(userId, { action: 'chatgpt_buy_email', quantity: qty });
-      await bot.sendMessage(userId, await getText(userId, 'enterEmailForPurchase'), {
-        reply_markup: {
-          inline_keyboard: [[{ text: await getText(userId, 'cancel'), callback_data: 'cancel_action' }]]
-        }
-      });
-      return;
-    }
-
-    if (state?.action === 'chatgpt_buy_email') {
-      const qty = Math.max(1, Math.min(100, parseInt(state.quantity, 10) || 1));
-      const baseEmail = String(text || '').trim();
-      if (!isValidEmailAddress(baseEmail)) {
-        await bot.sendMessage(userId, await getText(userId, 'askEmail'));
-        return;
-      }
-
       const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
-      let result = await processAutoChatGptCode(userId, { isFree: false, quantity: qty, baseEmail });
+      let result = await processAutoChatGptCode(userId, { isFree: false, quantity: qty });
       await bot.deleteMessage(userId, waitingMsg.message_id).catch(() => {});
 
       if (result.success) {
@@ -7905,8 +8027,10 @@ bot.on('message', async msg => {
 
 ⚠️ Requested: ${result.requestedQuantity} | Delivered: ${result.quantity}${result.timedOut ? ' | السبب: انتهت مهلة التوليد وتم تسليم المتوفر فقط' : ''}`;
         }
+        {
         const deliveryPrefix = await getCodeDeliveryPrefixHtml(userId);
         await bot.sendMessage(userId, `${deliveryPrefix}${successText}`, { parse_mode: 'HTML' });
+      }
         await sendAdminCodeActionNotice(userId, {
           sourceKey: 'balance',
           serviceType: 'ChatGPT GO',
@@ -7920,7 +8044,7 @@ bot.on('message', async msg => {
 
         if (Number(freshUser?.referralPoints || 0) >= neededPoints) {
           const waitingPointsMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
-          result = await processAutoChatGptCode(userId, { isFree: true, fromPoints: true, quantity: qty, baseEmail });
+          result = await processAutoChatGptCode(userId, { isFree: true, fromPoints: true, quantity: qty });
           await bot.deleteMessage(userId, waitingPointsMsg.message_id).catch(() => {});
 
           if (result.success) {
