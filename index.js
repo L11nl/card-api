@@ -446,7 +446,7 @@ const DEFAULT_TEXTS = {
     currentCreatorDiscount: 'Your creator discount: {percent}%',
     manageReferralSettingsText: '👥 Referral Settings\n\n{percentLine}\n{pointsLine}\n{freeCodeDaysLine}\n{milestonesLine}\n{referralsStatusLine}',
     chatgptCode: '🤖 ChatGPT Code',
-    askEmail: 'Please enter your email address:',
+    askEmail: '❌ Invalid email. Please enter a valid email address:',
     freeCodeSuccess: '🎉 Here is your free ChatGPT GO code:\n\n{code}',
     alreadyGotFree: 'You have already received your free code. You can purchase more codes.',
     askQuantity: 'How many ChatGPT codes would you like to buy? Send the number only.\n\n🔥 Quantity discount: if you buy 20 codes or more, the price becomes 1 USD per code.',
@@ -766,7 +766,7 @@ const DEFAULT_TEXTS = {
     currentCreatorDiscount: 'خصم صانع المحتوى الخاص بك: {percent}%',
     manageReferralSettingsText: '👥 إعدادات الإحالة\n\n{percentLine}\n{pointsLine}\n{freeCodeDaysLine}\n{milestonesLine}\n{referralsStatusLine}',
     chatgptCode: '🤖 كود ChatGPT',
-    askEmail: 'يرجى إدخال بريدك الإلكتروني:',
+    askEmail: '❌ الإيميل غير صالح. يرجى إدخال بريد إلكتروني صحيح:',
     freeCodeSuccess: '🎉 إليك كود ChatGPT GO المجاني:\n\n{code}',
     alreadyGotFree: 'لقد حصلت بالفعل على كودك المجاني. يمكنك شراء أكواد إضافية.',
     askQuantity: 'كم عدد أكواد ChatGPT التي تريد شراءها؟ أرسل الرقم فقط.\n\n🔥 خصم على الكمية: إذا اشتريت 20 كودًا أو أكثر يصبح سعر الكود الواحد 1 دولار.',
@@ -866,6 +866,27 @@ function generateRandomEmail() {
     localPart += chars[Math.floor(Math.random() * chars.length)];
   }
   return `${localPart}@gmail.com`;
+}
+
+
+function isValidEmailAddress(value) {
+  const email = String(value || '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function buildChatGptRequestEmail(baseEmail, index = 0) {
+  const fallback = generateRandomEmail();
+  const email = String(baseEmail || '').trim();
+  if (!isValidEmailAddress(email)) return fallback;
+
+  const atIndex = email.indexOf('@');
+  if (atIndex <= 0) return fallback;
+
+  const localPart = email.slice(0, atIndex);
+  const domainPart = email.slice(atIndex + 1);
+  const safeLocal = localPart.replace(/\+.*/, '');
+  const suffix = `${Date.now()}${index}`;
+  return `${safeLocal}+cg${suffix}@${domainPart}`;
 }
 
 function normalizeNumericInput(value) {
@@ -4540,7 +4561,13 @@ async function getOrCreateChatGptMerchant() {
 }
 
 async function processAutoChatGptCode(userId, options = {}) {
-  const { isFree = false, fromPoints = false, quantity = 1, allowFallbackStock = true } = options;
+  const {
+    isFree = false,
+    fromPoints = false,
+    quantity = 1,
+    allowFallbackStock = true,
+    baseEmail = ''
+  } = options;
   const safeQuantity = Math.max(1, Math.min(100, parseInt(quantity, 10) || 1));
   const startedAt = Date.now();
   const maxRuntimeMs = Math.min(900000, Math.max(60000, safeQuantity * 12000));
@@ -4579,7 +4606,9 @@ async function processAutoChatGptCode(userId, options = {}) {
       break;
     }
 
-    const email = generateRandomEmail();
+    await refreshChatGPTCookies(true);
+
+    const email = buildChatGptRequestEmail(baseEmail, codes.length + consecutiveFailures + 1);
     const remainingMs = Math.max(5000, deadlineAt - Date.now());
     const requestAttempts = safeQuantity <= 3 ? 3 : 2;
     const result = await getChatGPTCode(email, {
@@ -4591,6 +4620,9 @@ async function processAutoChatGptCode(userId, options = {}) {
     if (!result.success) {
       consecutiveFailures += 1;
       lastFailureReason = result.reason || 'Unknown error';
+
+      await refreshChatGPTCookies(true).catch(() => {});
+
       if (consecutiveFailures >= maxConsecutiveFailures) {
         if (allowFallbackStock) {
           const remaining = safeQuantity - codes.length;
@@ -4610,6 +4642,9 @@ async function processAutoChatGptCode(userId, options = {}) {
 
     consecutiveFailures = 0;
     codes.push(result.code);
+
+    await refreshChatGPTCookies(true).catch(() => {});
+
     if (codes.length < safeQuantity) {
       const pauseMs = Math.min(getRandomInt(1200, 2500), Math.max(0, deadlineAt - Date.now()));
       if (pauseMs > 0) {
@@ -7842,8 +7877,25 @@ bot.on('message', async msg => {
         return;
       }
 
+      await setUserState(userId, { action: 'chatgpt_buy_email', quantity: qty });
+      await bot.sendMessage(userId, await getText(userId, 'enterEmailForPurchase'), {
+        reply_markup: {
+          inline_keyboard: [[{ text: await getText(userId, 'cancel'), callback_data: 'cancel_action' }]]
+        }
+      });
+      return;
+    }
+
+    if (state?.action === 'chatgpt_buy_email') {
+      const qty = Math.max(1, Math.min(100, parseInt(state.quantity, 10) || 1));
+      const baseEmail = String(text || '').trim();
+      if (!isValidEmailAddress(baseEmail)) {
+        await bot.sendMessage(userId, await getText(userId, 'askEmail'));
+        return;
+      }
+
       const waitingMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
-      let result = await processAutoChatGptCode(userId, { isFree: false, quantity: qty });
+      let result = await processAutoChatGptCode(userId, { isFree: false, quantity: qty, baseEmail });
       await bot.deleteMessage(userId, waitingMsg.message_id).catch(() => {});
 
       if (result.success) {
@@ -7853,10 +7905,8 @@ bot.on('message', async msg => {
 
 ⚠️ Requested: ${result.requestedQuantity} | Delivered: ${result.quantity}${result.timedOut ? ' | السبب: انتهت مهلة التوليد وتم تسليم المتوفر فقط' : ''}`;
         }
-        {
         const deliveryPrefix = await getCodeDeliveryPrefixHtml(userId);
         await bot.sendMessage(userId, `${deliveryPrefix}${successText}`, { parse_mode: 'HTML' });
-      }
         await sendAdminCodeActionNotice(userId, {
           sourceKey: 'balance',
           serviceType: 'ChatGPT GO',
@@ -7870,7 +7920,7 @@ bot.on('message', async msg => {
 
         if (Number(freshUser?.referralPoints || 0) >= neededPoints) {
           const waitingPointsMsg = await bot.sendMessage(userId, await getText(userId, 'processing'));
-          result = await processAutoChatGptCode(userId, { isFree: true, fromPoints: true, quantity: qty });
+          result = await processAutoChatGptCode(userId, { isFree: true, fromPoints: true, quantity: qty, baseEmail });
           await bot.deleteMessage(userId, waitingPointsMsg.message_id).catch(() => {});
 
           if (result.success) {
