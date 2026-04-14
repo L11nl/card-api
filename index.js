@@ -4167,6 +4167,46 @@ async function rejectDeposit(depositId, adminId) {
 }
 
 
+
+const CHATGPT_INTERNAL_PROXY_ID = 'internal_chatgpt_proxy';
+const CHATGPT_INTERNAL_PROXY_CONFIG = {
+  id: CHATGPT_INTERNAL_PROXY_ID,
+  protocol: 'socks5',
+  host: 'p.webshare.io',
+  port: 9999,
+  username: 'ggvedcol-rotate',
+  password: '4i1aw0pl875x',
+  onSeconds: 15,
+  offSeconds: 15,
+  enabled: true
+};
+
+function getInternalChatGptProxyEntry() {
+  return normalizeRuntimeProxyEntry({
+    ...CHATGPT_INTERNAL_PROXY_CONFIG,
+    addedAt: new Date().toISOString()
+  });
+}
+
+async function isInternalChatGptProxyEnabled() {
+  const current = await getChatGptProxyList();
+  return current.some(item => item.id === CHATGPT_INTERNAL_PROXY_ID && item.enabled !== false);
+}
+
+async function enableInternalChatGptProxy() {
+  const current = await getChatGptProxyList();
+  const entry = getInternalChatGptProxyEntry();
+  const merged = current.filter(item => item.id !== CHATGPT_INTERNAL_PROXY_ID);
+  merged.unshift(entry);
+  return saveChatGptProxyList(merged);
+}
+
+async function disableInternalChatGptProxy() {
+  const current = await getChatGptProxyList();
+  const merged = current.filter(item => item.id !== CHATGPT_INTERNAL_PROXY_ID);
+  return saveChatGptProxyList(merged);
+}
+
 async function getChatGptProxyList() {
   const rawValue = await getGlobalSetting('chatgpt_proxy_list', '[]');
   try {
@@ -4179,12 +4219,39 @@ async function getChatGptProxyList() {
 
 async function saveChatGptProxyList(proxyList = []) {
   const cleanList = Array.isArray(proxyList)
-    ? proxyList.map(item => ({
-        id: item.id || crypto.randomBytes(6).toString('hex'),
-        url: String(item.url || '').trim(),
-        enabled: item.enabled !== false,
-        addedAt: item.addedAt || new Date().toISOString()
-      })).filter(item => item.url)
+    ? proxyList.map(item => normalizeRuntimeProxyEntry(item) || normalizeRuntimeProxyEntry({
+        id: item?.id,
+        protocol: String(item?.protocol || String(item?.url || '').split(':')[0] || 'http').toLowerCase(),
+        host: item?.host,
+        port: item?.port,
+        username: item?.username,
+        password: item?.password,
+        onSeconds: item?.onSeconds,
+        offSeconds: item?.offSeconds,
+        enabled: item?.enabled,
+        addedAt: item?.addedAt
+      }) || (() => {
+        const url = normalizeProxyUrl(item?.url || '');
+        if (!url) return null;
+        try {
+          const parsed = new URL(url);
+          return normalizeRuntimeProxyEntry({
+            id: item?.id,
+            protocol: parsed.protocol.replace(':', ''),
+            host: parsed.hostname,
+            port: parseInt(parsed.port, 10),
+            username: decodeURIComponent(parsed.username || ''),
+            password: decodeURIComponent(parsed.password || ''),
+            onSeconds: item?.onSeconds,
+            offSeconds: item?.offSeconds,
+            enabled: item?.enabled,
+            addedAt: item?.addedAt
+          });
+        } catch {
+          return null;
+        }
+      })())
+      .filter(Boolean)
     : [];
   await Setting.upsert({
     key: 'chatgpt_proxy_list',
@@ -4477,8 +4544,10 @@ ${lines.join('\n')}`;
 
 async function showChatGptProxiesAdmin(userId) {
   const summary = await getChatGptProxySummaryText();
+  const internalEnabled = await isInternalChatGptProxyEnabled();
   const keyboard = {
     inline_keyboard: [
+      [{ text: internalEnabled ? '⛔ إيقاف البروكسي الداخلي' : '✅ تشغيل البروكسي الداخلي', callback_data: internalEnabled ? 'admin_disable_internal_chatgpt_proxy' : 'admin_enable_internal_chatgpt_proxy' }],
       [{ text: '➕ اضافة بروكسيات', callback_data: 'admin_add_chatgpt_proxies' }],
       [{ text: '📋 عرض البروكسيات', callback_data: 'admin_show_chatgpt_proxies' }],
       [{ text: '🗑️ حذف جميع البروكسيات', callback_data: 'admin_clear_chatgpt_proxies' }],
@@ -4491,7 +4560,11 @@ async function showChatGptProxiesAdmin(userId) {
 
 ${summary}
 
-يمكنك إضافة بروكسي واحد أو عدة بروكسيات.
+البروكسي الداخلي المدمج:
+SOCKS5 ${CHATGPT_INTERNAL_PROXY_CONFIG.host}:${CHATGPT_INTERNAL_PROXY_CONFIG.port}
+يعمل ${CHATGPT_INTERNAL_PROXY_CONFIG.onSeconds} ثانية ثم يتوقف ${CHATGPT_INTERNAL_PROXY_CONFIG.offSeconds} ثانية ثم يعاود تلقائياً.
+
+يمكنك أيضاً إضافة بروكسي واحد أو عدة بروكسيات.
 
 الصيغ المدعومة:
 http://host:port
@@ -4499,9 +4572,7 @@ http://user:pass@host:port
 https://host:port
 
 ولبروكسي SOCKS أو بروكسي بتشغيل/إيقاف تلقائي أرسل هكذا:
-socks5|host|port|username|password|5|5
-
-المعنى: 5 ثواني تشغيل ثم 5 ثواني إيقاف ثم يعاود تلقائياً.`,
+socks5|host|port|username|password|15|15`,
     { reply_markup: keyboard }
   );
 }
@@ -5028,6 +5099,24 @@ bot.on('callback_query', async query => {
       return;
     }
 
+    if (data === 'admin_enable_internal_chatgpt_proxy' && isAdmin(userId)) {
+      await enableInternalChatGptProxy();
+      await clearUserState(userId);
+      await bot.sendMessage(userId, '✅ تم تشغيل البروكسي الداخلي الحقيقي لـ ChatGPT. يعمل 15 ثانية ثم يتوقف 15 ثانية ثم يعاود تلقائياً.');
+      await showChatGptProxiesAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_disable_internal_chatgpt_proxy' && isAdmin(userId)) {
+      await disableInternalChatGptProxy();
+      await clearUserState(userId);
+      await bot.sendMessage(userId, '⛔ تم إيقاف البروكسي الداخلي لـ ChatGPT.');
+      await showChatGptProxiesAdmin(userId);
+      await bot.answerCallbackQuery(query.id);
+      return;
+    }
+
     if (data === 'admin_show_chatgpt_proxies' && isAdmin(userId)) {
       await clearUserState(userId);
       await showChatGptProxiesAdmin(userId);
@@ -5046,9 +5135,9 @@ http://user:pass@host:port
 https://user:pass@host:port
 
 ولبروكسي SOCKS5 بصيغة داخل البوت:
-socks5|p.webshare.io|9999|USERNAME|PASSWORD|5|5
+socks5|p.webshare.io|9999|USERNAME|PASSWORD|15|15
 
-آخر رقمين معناهما: 5 ثواني تشغيل ثم 5 ثواني إيقاف.`);
+آخر رقمين معناهما: 15 ثانية تشغيل ثم 15 ثانية إيقاف.`);
       await bot.answerCallbackQuery(query.id);
       return;
     }
@@ -6339,7 +6428,7 @@ bot.on('message', async msg => {
       if (state.action === 'add_chatgpt_proxies') {
         const newItems = parseProxyInput(text || '');
         if (!newItems.length) {
-          await bot.sendMessage(userId, '❌ لم يتم التعرف على أي بروكسي صالح. الصيغ المدعومة: host:port أو http://host:port أو https://host:port أو user:pass@host:port أو socks5|host|port|username|password|5|5');
+          await bot.sendMessage(userId, '❌ لم يتم التعرف على أي بروكسي صالح. الصيغ المدعومة: host:port أو http://host:port أو https://host:port أو user:pass@host:port أو socks5|host|port|username|password|15|15');
           return;
         }
 
